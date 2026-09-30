@@ -1,8 +1,6 @@
-#pragma once
+// Shared script at "/motion.js": the IMU sample stream from /ws and the orientation
+// filter. Loaded by every page, so they all use the same fusion.
 
-// Shared script served at "/motion.js": the IMU sample stream from /ws and the orientation
-// filter. Loaded by every page, so both the motion page and the tennis game use the same fusion.
-static const char MOTION_JS[] PROGMEM = R"JS(
 // ---- Stream ----
 // Opens the /ws WebSocket and reconnects with backoff. The device sends
 // {"imu":"MPU6886","s":[[seq,t,gx,gy,gz,ax,ay,az,btn],...]}; each sample is handed on as
@@ -130,4 +128,3 @@ function rotationMatrix([w, x, y, z]) {
     [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
   ];
 }
-)JS";

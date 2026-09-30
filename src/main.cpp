@@ -5,12 +5,7 @@
 #include <ESPAsyncWebServer.h>
 #include <vector>
 #include "secrets.h"
-#include "page.h"
-#include "motion.h"
-#include "tennis.h"
-#include "controller.h"
-#include "saber.h"
-#include "skate.h"
+#include "web_assets.h"  // the pages in web/, gzipped at build time by tools/embed_web.py
 
 // IMU samples are taken at a fixed rate into a ring buffer and pushed to every
 // WebSocket client in small batches. New clients first get the buffered history.
@@ -155,24 +150,14 @@ void setup() {
   }
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-    req->send(200, "text/html", INDEX_HTML);
-  });
-  server.on("/tennis", HTTP_GET, [](AsyncWebServerRequest* req) {
-    req->send(200, "text/html", TENNIS_HTML);
-  });
-  server.on("/saber", HTTP_GET, [](AsyncWebServerRequest* req) {
-    req->send(200, "text/html", SABER_HTML);
-  });
-  server.on("/skate", HTTP_GET, [](AsyncWebServerRequest* req) {
-    req->send(200, "text/html", SKATE_HTML);
-  });
-  server.on("/motion.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-    req->send(200, "text/javascript", MOTION_JS);
-  });
-  server.on("/controller.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-    req->send(200, "text/javascript", CONTROLLER_JS);
-  });
+  // Every page and script is stored gzipped; the browser unpacks it
+  for (const WebAsset& asset : WEB_ASSETS) {
+    server.on(asset.path, HTTP_GET, [&asset](AsyncWebServerRequest* req) {
+      AsyncWebServerResponse* res = req->beginResponse(200, asset.type, asset.data, asset.len);
+      res->addHeader("Content-Encoding", "gzip");
+      req->send(res);
+    });
+  }
   server.onNotFound([](AsyncWebServerRequest* req) {
     req->send(404, "text/plain", "Not found");
   });

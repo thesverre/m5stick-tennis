@@ -1,0 +1,804 @@
+<!doctype html>
+<!--
+  Skate runner at "/runner": a whole-body game. The stick goes in your trouser pocket;
+  your skater rolls down the road at a fixed speed and you jump over low obstacles and squat
+  under high ones, for real. Jumps are the free-fall between push-off and landing; squats are
+  your thigh tilting forward.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M5StickC Runner</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: rgba(252,252,251,0.9); --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --border: rgba(11,11,11,0.10); --accent: #2a78d6; --good: #0ca30c; --bad: #d03b3b;
+  --jump: #f07a1a; --duck: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: rgba(26,26,25,0.86); --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+    --border: rgba(255,255,255,0.10); --accent: #3987e5;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: #a9d3f2; color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#view { position: fixed; inset: 0; }
+#view canvas { display: block; width: 100%; height: 100%; }
+.panel { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 14px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+#brand { top: 12px; left: 12px; display: flex; flex-direction: column; gap: 2px; }
+#brand h1 { font-size: 17px; margin: 0; }
+#brand a { color: var(--accent); text-decoration: none; font-size: 13px; }
+.status { color: var(--ink-2); display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--good); } .dot.err { background: var(--bad); }
+#hud { top: 12px; right: 12px; }
+.tiles { display: grid; grid-auto-flow: column; gap: 4px 18px; }
+.stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.stat .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 12px; font-weight: 400; color: var(--muted); }
+#lives span { color: var(--bad); letter-spacing: 2px; }
+#lives span.lost { color: var(--muted); opacity: .35; }
+/* Squat gauge: how far your thigh is tilted, with a mark where it counts as ducking */
+#gauge { bottom: 76px; left: 12px; width: 64px; padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+#gauge .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+#gauge .track { position: relative; width: 14px; height: 120px; border-radius: 7px; background: var(--border); overflow: hidden; }
+#gauge .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--muted); border-radius: 7px; }
+#gauge .fill.on { background: var(--duck); }
+#gauge .mark { position: absolute; left: -3px; right: -3px; height: 2px; background: var(--ink); }
+#gauge .v { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+#controls { bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px;
+  max-width: calc(100% - 24px); }
+.hint { color: var(--ink-2); font-size: 12px; }
+button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#banner { position: fixed; top: 28%; left: 50%; transform: translate(-50%, -50%) scale(.9); pointer-events: none;
+  font: 800 60px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 3px 16px rgba(0,0,0,.4);
+  opacity: 0; transition: opacity .2s, transform .2s; text-align: center; white-space: nowrap; }
+#banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+#banner small { display: block; font-size: 20px; font-weight: 600; margin-top: 8px; }
+#pop { position: fixed; top: 44%; left: 50%; transform: translateX(-50%); pointer-events: none; font: 700 24px system-ui, sans-serif;
+  color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,.45); opacity: 0; transition: opacity .3s; }
+#pop.show { opacity: 1; transition: none; }
+.dialog { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(470px, calc(100% - 32px)); padding: 18px 20px;
+  max-height: calc(100% - 32px); overflow: auto; }
+.dialog h2 { margin: 0 0 8px; font-size: 20px; }
+.dialog ol { margin: 0 0 12px; padding-left: 20px; color: var(--ink-2); }
+.dialog li { margin-bottom: 4px; }
+.dialog .key { display: inline-block; padding: 0 6px; border-radius: 4px; color: #fff; font-weight: 600; }
+.label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-top: 10px; }
+.seg { display: flex; gap: 6px; margin: 4px 0; }
+.seg button { flex: 1; }
+.seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.desc { color: var(--ink-2); font-size: 12px; min-height: 2.9em; }
+.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.err { color: var(--bad); }
+@media (max-width: 720px) {
+  #hud { top: auto; bottom: 70px; left: 12px; right: 12px; }
+  #gauge { bottom: 150px; }
+  #controls .hint { display: none; }
+  #banner { font-size: 42px; }
+}
+</style>
+</head>
+<body>
+<div id="view"></div>
+
+<div class="panel" id="brand">
+  <h1>M5StickC Runner</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+  <a href="/">← Motion page</a>
+</div>
+
+<div class="panel" id="hud" hidden>
+  <div class="tiles">
+    <div class="stat"><div class="k">Lives</div><div class="v" id="lives"></div></div>
+    <div class="stat"><div class="k">Score</div><div class="v" id="s-score">0</div></div>
+    <div class="stat"><div class="k">Cleared</div><div class="v" id="s-cleared">0</div></div>
+    <div class="stat"><div class="k">Jumps</div><div class="v" id="s-jumps">0</div></div>
+    <div class="stat"><div class="k">Squats</div><div class="v" id="s-squats">0</div></div>
+  </div>
+</div>
+
+<div class="panel" id="gauge" hidden>
+  <div class="k">Squat</div>
+  <div class="track"><div class="fill" id="g-fill"></div><div class="mark" id="g-mark"></div></div>
+  <div class="v" id="g-deg">0°</div>
+</div>
+
+<div class="panel" id="controls">
+  <span class="hint" id="play-hint">Space or click: pause</span>
+  <button id="pause">Pause</button>
+  <button id="menu-btn">Menu</button>
+</div>
+
+<div id="banner"></div>
+<div id="pop"></div>
+
+<div class="panel dialog" id="menu">
+  <h2>Ready to ride</h2>
+  <ol>
+    <li>Put the stick in a front trouser pocket (a snug one) and stand facing the screen,
+      with some clear floor around you.</li>
+    <li>When the run starts, stand still for 2 seconds while the stick learns how it sits.</li>
+    <li><span class="key" style="background:var(--jump)">Orange</span> obstacles are low: <b>jump</b>. A small hop is enough.
+      <span class="key" style="background:var(--duck)">Blue</span> ones are high: <b>squat</b> until you're under. Long ones need you to stay down.</li>
+  </ol>
+  <div class="label">Level</div>
+  <div class="seg" id="levels">
+    <button data-level="easy">Easy</button><button data-level="medium">Medium</button><button data-level="hard">Hard</button>
+  </div>
+  <div class="desc" id="level-desc"></div>
+  <div class="err" id="menu-err"></div>
+  <div class="actions"><button class="primary" id="start">Start</button><span class="hint">or press Space</span></div>
+</div>
+
+<div class="panel dialog" id="over" hidden>
+  <h2>Run over</h2>
+  <div class="summary" id="summary"></div>
+  <div class="desc" id="over-sub"></div>
+  <div class="actions"><button class="primary" id="again">Ride again</button><button id="to-menu">Menu</button></div>
+</div>
+
+<script src="/motion.js"></script>
+<script src="/controller.js"></script>
+<script>
+// ---- Game model (plain JS, three.js coordinates) ----
+// The road runs downhill into the screen: distance s along it maps to z = −s, its centre line
+// winds (roadX) and drops (roadY). The skater follows the centre line at a fixed speed; all
+// you do is jump and squat. Lengths in m, speeds in m/s, times in ms.
+const SPEED = 7;                     // the same on every level, all run long (25 km/h)
+const HALF_W = 4, EDGE = 6.3;
+const STAND_H = 1.8, DUCK_H = 1.1;   // skater's height standing / crouched on the board
+const CLEARANCE = 1.3;               // high obstacles leave this much room underneath
+const JUMP_PEAK = 1.2;               // an in-game jump always reaches this height
+const R_RIDER = 0.3, STEP_MS = 4;
+const roadX = s => 18 * Math.sin(s / 140) + 6 * Math.sin(s / 67 + 1.3);
+const roadDX = s => 18 / 140 * Math.cos(s / 140) + 6 / 67 * Math.cos(s / 67 + 1.3);
+const roadY = s => -0.05 * s + 1.0 * Math.sin(s / 45) + 0.4 * Math.sin(s / 19 + 0.7);
+const at = (s, x, h = 0) => [roadX(s) + x, roadY(s) + h, -s];
+
+// Detection from the stick in your pocket, tuned on a recording of real squats and hops:
+// squats tilted the thigh to 40–44° (25° after ~0.3 s, 35° after ~0.45 s); hops pushed off at
+// 1.7–2 g, read 0.1–0.6 g in the air (the pocket jiggles), and landed at 2.8–3.7 g. Squats never
+// dipped below 0.66 g, so "under 0.5 g for 30 ms right after a push-off" only catches jumps.
+const PUSH_G = 1.3, AIR_G = 0.5, AIR_SAMPLES = 3, LAND_G = 1.3, RELEASE_DEG = 10;
+
+// Levels (the speed is the same on all of them):
+//  gap    — seconds between obstacles; hold — how long high obstacles are, in seconds under them
+//  air    — how long an in-game jump lasts; longer = more forgiving timing
+//  duck   — thigh angle that counts as squatting
+//  combo  — chance an obstacle is followed ~1.2 s later by one of the other kind
+//  cue    — show JUMP! / DUCK! as they come
+const LEVELS = {
+  easy: {
+    label: "Easy", desc: "Plenty of time between obstacles, a gentle squat is enough, JUMP! and DUCK! cues, 3 lives.",
+    gap: [3.2, 4.2], hold: [0.3, 0.6], air: 1000, duck: 22, combo: 0, cue: true, lives: 3,
+  },
+  medium: {
+    label: "Medium", desc: "Obstacles come faster, some in pairs, and long ones to stay down under. 2 lives.",
+    gap: [2.4, 3.2], hold: [0.3, 1.0], air: 850, duck: 28, combo: 0.25, cue: true, lives: 2,
+  },
+  hard: {
+    label: "Hard", desc: "Quick pairs, deeper squats, long tunnels to hold, tighter jump timing and no cues. One life.",
+    gap: [1.7, 2.4], hold: [0.5, 1.5], air: 750, duck: 33, combo: 0.5, cue: false, lives: 1,
+  },
+};
+
+const settings = { level: "easy" };
+try { Object.assign(settings, JSON.parse(localStorage.getItem("runner") || "{}")); } catch (e) { /* defaults */ }
+if (!LEVELS[settings.level]) settings.level = "easy";
+let LV = LEVELS[settings.level];
+let best = {};
+try { best = JSON.parse(localStorage.getItem("runner-best") || "{}"); } catch (e) { /* none yet */ }
+
+const game = {
+  simT: null, clock: 0,
+  phase: "menu",            // "menu" | "calibrate" | "play" | "over"
+  paused: false, calibEnd: 0, calib: [],
+  up0: null,                // "up" in stick coordinates while you stood still: your standing thigh
+  s: 0, h: 0, vh: 0, air: false, ducking: false, angle: 0,
+  lives: 3, cleared: 0, jumps: 0, squats: 0, bestJump: 0, crashUntil: 0, safeUntil: 0,
+  nextS: 0, takeoffs: [],   // device times of detected real jumps, for the simulation to act on
+};
+const obstacles = [];       // {kind: "low"|"high", type, s, d (length along the road), h (low: height), cued, passed, hit}
+const events = [];
+
+// ---- Real jump detection (runs on every live sample) ----
+// Takeoff: under AIR_G for AIR_SAMPLES samples within 400 ms of a push-off. Air time runs from
+// dropping below 1 g to coming back above it just before the landing spike (a brief in-air
+// jiggle above 1 g doesn't end it; only a real landing spike does).
+const jump = { peakAt: -1e9, low: 0, below1At: 0, riseAt: 0, prevG: 1, inAir: false, takeoffAt: 0, landAt: -1e9 };
+ctl.onSample = s => {
+  const g = Math.hypot(...s.a);
+  if (g > PUSH_G) jump.peakAt = s.t;
+  if (g < 1 && jump.prevG >= 1) jump.below1At = s.t;
+  if (g >= 1 && jump.prevG < 1) jump.riseAt = s.t;
+  jump.prevG = g;
+  if (!jump.inAir) {
+    jump.low = g < AIR_G ? jump.low + 1 : 0;
+    if (jump.low >= AIR_SAMPLES && s.t - jump.peakAt < 400) {
+      jump.inAir = true; jump.takeoffAt = jump.below1At || s.t;
+      game.takeoffs.push(s.t);
+    }
+  } else if (g > LAND_G || s.t - jump.takeoffAt > 1000) {
+    const landAt = s.t - jump.riseAt < 60 ? jump.riseAt : s.t, air = (landAt - jump.takeoffAt) / 1000;
+    jump.inAir = false; jump.low = 0; jump.peakAt = -1e9; jump.landAt = s.t;
+    if (air < 1) events.push({ type: "realJump", cm: Math.round(9.81 * air * air / 8 * 100) });
+  }
+};
+ctl.onPress = bit => { if (bit === 1) onStartKey(); };
+
+// Thigh angle: between "up" in stick coordinates now and while you stood still
+function thighAngle(q) {
+  if (!game.up0) return 0;
+  const up = rotationMatrix(q)[2];
+  return Math.acos(clamp(dot(up, game.up0), -1, 1)) * 180 / Math.PI;
+}
+
+// ---- Obstacles ----
+const LOW_TYPES = [["log", 0.4, 0.45], ["hurdle", 0.55, 0.25], ["crates", 0.5, 0.6]];     // type, height, length
+const HIGH_TYPES = ["bar", "banner", "tunnel"];
+function spawn(s, kind) {
+  if (kind === "low") {
+    const [type, h, d] = LOW_TYPES[Math.floor(Math.random() * LOW_TYPES.length)];
+    obstacles.push({ kind, type, s, d, h, cued: false, passed: false, hit: false });
+    return d;
+  }
+  const d = Math.max(0.4, rand(...LV.hold) * SPEED), type = d > 4 ? "tunnel" : d > 2 ? "banner" : "bar";
+  obstacles.push({ kind, type, s: s + d / 2, d, h: 0, cued: false, passed: false, hit: false });
+  return d;
+}
+function fillRoad() {
+  while (game.nextS < game.s + 130) {
+    const kind = Math.random() < 0.5 ? "low" : "high";
+    let end = game.nextS + spawn(game.nextS, kind);
+    if (Math.random() < LV.combo) end += spawn(end + 1.2 * SPEED, kind === "low" ? "high" : "low") + 1.2 * SPEED;
+    game.nextS = end + rand(...LV.gap) * SPEED;
+  }
+  for (let i = obstacles.length - 1; i >= 0; i--) if (obstacles[i].s < game.s - 20) obstacles.splice(i, 1);
+}
+
+// ---- Riding ----
+function crash(o) {
+  o.hit = true;
+  game.lives--;
+  game.crashUntil = game.clock + 1200;
+  game.safeUntil = game.clock + 2600;
+  game.air = false; game.h = 0; game.vh = 0;
+  events.push({ type: "crash", kind: o.kind });
+  if (game.lives > 0) return;
+  game.phase = "over";
+  const score = runScore(), isBest = score > (best[settings.level] || 0);
+  if (isBest) { best[settings.level] = score; try { localStorage.setItem("runner-best", JSON.stringify(best)); } catch (e) { /* not saved */ } }
+  events.push({ type: "over", score, isBest });
+}
+const runScore = () => Math.floor(game.s) + 20 * game.cleared;
+
+function step(q, h) {
+  const dt = h / 1000;
+  game.angle = thighAngle(q);
+  // Squatting, with a little hysteresis so it doesn't flicker at the threshold. It counts as a
+  // squat once held 0.3 s, unless it began just after a landing (knees absorbing the jump).
+  const was = game.ducking;
+  game.ducking = game.angle > (was ? LV.duck - RELEASE_DEG : LV.duck);
+  if (game.ducking && !was) {
+    events.push({ type: "duck" });
+    game.duckSince = game.clock;
+    game.duckCounts = game.simT - jump.landAt > 400;
+  }
+  if (game.ducking && game.duckCounts && game.clock - game.duckSince >= 300) { game.duckCounts = false; game.squats++; }
+
+  // The stick can shift in the pocket. While you stand still (not squatting) the standing
+  // reference slowly follows it, and a moderate "squat" held dead still for 3 s — longer than
+  // any obstacle needs — is taken as the stick having moved: that becomes the new standing.
+  if (game.up0) {
+    const still = Math.hypot(...orient.w) < 25 && orient.aDev < 0.05, up = rotationMatrix(q)[2];
+    if (!game.ducking && still) game.up0 = unit(mix(game.up0, up, Math.min(1, dt / 6)));
+    game.stillDuck = game.ducking && still && game.angle < 55 ? game.stillDuck + h : 0;  // sitting (70°+) isn't a shift
+    if (game.stillDuck > 3000) { game.up0 = up; game.stillDuck = 0; game.ducking = false; events.push({ type: "recal" }); }
+  }
+
+  if (game.phase === "calibrate") {
+    game.calib.push(rotationMatrix(q)[2]);
+    if (game.clock >= game.calibEnd) {
+      const n = game.calib.length, m = [0, 1, 2].map(i => game.calib.reduce((a, u) => a + u[i], 0) / n);
+      game.up0 = unit(m);
+      game.phase = "play";
+      game.takeoffs.length = 0;
+      events.push({ type: "go" });
+    }
+    return;
+  }
+
+  // In-game jumps start the moment a real one is detected
+  while (game.takeoffs.length && game.takeoffs[0] <= game.simT) {
+    game.takeoffs.shift();
+    game.jumps++;
+    if (!game.air && game.clock >= game.crashUntil) {
+      const T = LV.air / 1000, g = 8 * JUMP_PEAK / (T * T);
+      game.air = true; game.vh = g * T / 2; game.g = g;
+      events.push({ type: "jump" });
+    }
+  }
+  if (game.air) {
+    game.h += game.vh * dt - game.g * dt * dt / 2;
+    game.vh -= game.g * dt;
+    if (game.h <= 0) { game.air = false; game.h = 0; game.vh = 0; events.push({ type: "land" }); }
+  }
+  if (game.clock < game.crashUntil) return;
+  game.s += SPEED * dt;
+
+  // Obstacles: low ones must pass under your board, high ones over your head
+  const top = game.h + (game.ducking && !game.air ? DUCK_H : STAND_H);
+  for (const o of obstacles) {
+    if (o.hit || o.passed) continue;
+    const lead = (o.s - o.d / 2 - R_RIDER - game.s) / SPEED;  // seconds until you reach it
+    if (LV.cue && !o.cued && lead < (o.kind === "high" ? 1.0 : 0.6)) { o.cued = true; events.push({ type: "cue", kind: o.kind }); }
+    if (game.s > o.s + o.d / 2 + R_RIDER) {
+      o.passed = true;
+      if (!o.ghost) { game.cleared++; events.push({ type: "cleared" }); }
+      continue;
+    }
+    if (lead > 0) continue;
+    if (game.clock < game.safeUntil) { o.ghost = true; continue; }  // passing through right after a crash doesn't count
+    if (o.kind === "low" ? game.h < o.h : top > CLEARANCE) { crash(o); return; }
+  }
+}
+
+// Advance to device time `target` in small steps against the interpolated stick
+function simulate(target) {
+  if (game.simT === null || target - game.simT > 250 || target < game.simT - 1000 || game.paused || game.phase === "menu") {
+    game.simT = target;
+    game.takeoffs.length = 0;
+    return;
+  }
+  while (game.simT < target) {
+    const h = Math.min(STEP_MS, target - game.simT);
+    game.simT += h;
+    game.clock += h;
+    if (game.phase === "play" || game.phase === "calibrate") step(quatAt(game.simT), h);
+    else game.angle = thighAngle(quatAt(game.simT));
+  }
+  if (game.phase === "play") fillRoad();
+}
+
+// ---- Page glue ----
+function startGame() {
+  LV = LEVELS[settings.level];
+  Object.assign(game, { phase: "calibrate", paused: false, calibEnd: game.clock + 2000, calib: [], s: 0, h: 0, vh: 0, air: false,
+    ducking: false, stillDuck: 0, up0: null, lives: LV.lives, cleared: 0, jumps: 0, squats: 0, bestJump: 0, crashUntil: 0, safeUntil: 0, nextS: 5 * SPEED });
+  game.takeoffs.length = 0;
+  obstacles.length = 0;
+  sfx.init();
+  document.getElementById("menu").hidden = true;
+  document.getElementById("over").hidden = true;
+  document.getElementById("hud").hidden = false;
+  document.getElementById("gauge").hidden = false;
+  document.getElementById("pause").textContent = "Pause";
+  setPhaseUI();
+  updateHud();
+  banner("Stand still", "#ffffff", "learning how the stick sits…", 2000);
+}
+
+function setPhaseUI() {
+  const playing = game.phase === "play" || game.phase === "calibrate";
+  document.getElementById("pause").hidden = document.getElementById("play-hint").hidden = !playing;
+  document.getElementById("menu-btn").hidden = game.phase === "menu";
+  document.getElementById("controls").hidden = game.phase === "menu";
+}
+
+function showMenu() {
+  game.phase = "menu"; game.paused = false;
+  obstacles.length = 0;
+  for (const id of ["over", "hud", "gauge"]) document.getElementById(id).hidden = true;
+  document.getElementById("menu").hidden = false;
+  setPhaseUI();
+}
+
+function togglePause() {
+  if (game.phase !== "play" && game.phase !== "calibrate") return;
+  game.paused = !game.paused;
+  document.getElementById("pause").textContent = game.paused ? "Resume" : "Pause";
+  if (game.paused) banner("Paused", "#ffffff", "", 100000); else hideBanner();
+}
+
+// Space / M5 button: start from the menu or the end screen, pause while riding
+function onStartKey() {
+  if (game.phase === "menu" || game.phase === "over") startGame();
+  else togglePause();
+}
+
+function renderMenu() {
+  for (const b of document.querySelectorAll("#levels button")) b.classList.toggle("on", b.dataset.level === settings.level);
+  document.getElementById("level-desc").textContent = LEVELS[settings.level].desc;
+  try { localStorage.setItem("runner", JSON.stringify(settings)); } catch (e) { /* not remembered */ }
+}
+
+function updateHud() {
+  document.getElementById("lives").replaceChildren(...Array.from({ length: LV.lives }, (_, i) => {
+    const s = document.createElement("span");
+    s.textContent = "♥";
+    if (i >= game.lives) s.className = "lost";
+    return s;
+  }));
+  document.getElementById("s-cleared").textContent = game.cleared;
+  document.getElementById("s-jumps").textContent = game.jumps;
+  document.getElementById("s-squats").textContent = game.squats;
+}
+
+function setStatus(ok, text) {
+  document.getElementById("dot").className = "dot " + (ok ? "ok" : "err");
+  document.getElementById("status").textContent = text;
+}
+
+let bannerTimer = 0, popTimer = 0;
+function banner(text, color, small = "", ms = 900) {
+  const el = document.getElementById("banner");
+  el.textContent = text;
+  if (small) { const s = document.createElement("small"); s.textContent = small; el.appendChild(s); }
+  el.style.color = color;
+  el.classList.add("show");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideBanner, ms);
+}
+const hideBanner = () => document.getElementById("banner").classList.remove("show");
+function pop(text) {
+  const el = document.getElementById("pop");
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(popTimer);
+  popTimer = setTimeout(() => el.classList.remove("show"), 900);
+}
+
+// ---- Sound: synthesized with Web Audio ----
+const sfx = {
+  ctx: null,
+  init() {
+    if (this.ctx) { this.ctx.resume(); return; }
+    try { this.ctx = new AudioContext(); } catch (e) { return; }
+    const ctx = this.ctx;
+    this.master = ctx.createGain(); this.master.gain.value = 0.6; this.master.connect(ctx.destination);
+    this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const data = this.noise.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter();
+    src.buffer = this.noise; src.loop = true; src.start();
+    f.type = "bandpass"; f.frequency.value = 300;
+    this.roll = ctx.createGain(); this.roll.gain.value = 0;
+    src.connect(f).connect(this.roll).connect(this.master);
+  },
+  ready() { return this.ctx && this.ctx.state === "running"; },
+  ride(on) { if (this.ready()) this.roll.gain.setTargetAtTime(on ? 0.1 : 0, this.ctx.currentTime, 0.08); },
+  tone(f0, f1, len, gain, type = "sine") {
+    if (!this.ready()) return;
+    const ctx = this.ctx, t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + len);
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    o.connect(g).connect(this.master);
+    o.start(t); o.stop(t + len + 0.02);
+  },
+  burst(freq, len, gain, type = "bandpass") {
+    if (!this.ready()) return;
+    const ctx = this.ctx, t = ctx.currentTime, src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = this.noise; f.type = type; f.frequency.value = freq;
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t, Math.random() * 0.5); src.stop(t + len + 0.02);
+  },
+};
+
+function drainEvents() {
+  for (const e of events.splice(0)) {
+    if (e.type === "jump") { sfx.burst(1800, 0.06, 0.6); sfx.tone(180, 90, 0.08, 0.4); }
+    else if (e.type === "land") { sfx.burst(900, 0.08, 0.5); }
+    else if (e.type === "duck") sfx.burst(600, 0.15, 0.25);
+    else if (e.type === "realJump") { game.bestJump = Math.max(game.bestJump, e.cm); pop(`${e.cm} cm`); updateHud(); }
+    else if (e.type === "cue") { banner(e.kind === "low" ? "JUMP!" : "DUCK!", e.kind === "low" ? "#ffb066" : "#8cc4ff", "", 700); sfx.tone(880, 880, 0.06, 0.12, "square"); }
+    else if (e.type === "cleared") { sfx.tone(1320, 1760, 0.08, 0.1, "square"); updateHud(); }
+    else if (e.type === "crash") {
+      sfx.burst(400, 0.5, 0.9, "lowpass"); sfx.tone(110, 40, 0.4, 0.6); updateHud();
+      if (game.phase === "play") banner("Ouch!", "#ffb3a8", e.kind === "low" ? "jump over the orange ones" : "squat under the blue ones", 1400);
+    } else if (e.type === "go") { banner("Go!", "#ffffff"); updateHud(); }
+    else if (e.type === "recal") pop("Stick moved: re-centred");
+    else if (e.type === "over") {
+      setPhaseUI();
+      const stat = (k, v) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+      document.getElementById("summary").innerHTML =
+        stat("Score", e.score) + stat("Distance", `${Math.floor(game.s)} <small>m</small>`) + stat("Cleared", game.cleared) +
+        stat("Jumps", game.jumps) + stat("Squats", game.squats) + stat("Best jump", `${game.bestJump} <small>cm</small>`);
+      document.getElementById("over-sub").textContent =
+        `${LV.label}.${e.isBest ? " New best score!" : ` Best: ${best[settings.level] || 0}.`} Press Space or Ride again for another run.`;
+      setTimeout(() => { if (game.phase === "over") document.getElementById("over").hidden = false; }, 1200);
+    }
+  }
+}
+
+for (const b of document.querySelectorAll("#levels button")) b.onclick = () => { settings.level = b.dataset.level; renderMenu(); };
+document.getElementById("start").onclick = startGame;
+document.getElementById("again").onclick = startGame;
+document.getElementById("to-menu").onclick = showMenu;
+document.getElementById("menu-btn").onclick = showMenu;
+document.getElementById("pause").onclick = togglePause;
+document.addEventListener("keydown", e => { if (e.code === "Space") { e.preventDefault(); onStartKey(); } });
+document.getElementById("view").addEventListener("click", () => { if (game.phase === "play" || game.phase === "calibrate") togglePause(); });
+renderMenu();
+setPhaseUI();
+
+let imu = "";
+setStatus(false, "Connecting…");
+connectStream({
+  open() {
+    resetStream();
+    game.simT = null;
+    setStatus(true, "Live");
+  },
+  batch(name, batch) {
+    if (!imu) setStatus(true, `Live · ${name}`);
+    imu = name;
+    feedBatch(batch);
+  },
+  closed(retryMs) { setStatus(false, `Disconnected — retrying in ${(retryMs / 1000).toFixed(1)} s`); },
+});
+
+// ---- 3D view ----
+import("https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js").then(buildScene, () => {
+  document.getElementById("menu-err").textContent =
+    "Couldn't load the 3D library. This page needs internet access for three.js.";
+});
+
+function buildScene(THREE) {
+  const V = a => new THREE.Vector3(a[0], a[1], a[2]);
+  const view = document.getElementById("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  view.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xa9d3f2);
+  scene.fog = new THREE.Fog(0xa9d3f2, 50, 130);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 400);
+  scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x4a6b3a, 1.7));
+  const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  Object.assign(sun.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, near: 1, far: 40 });
+  scene.add(sun, sun.target);
+  const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...extra });
+
+  // ---- Road, built in 40 m chunks ahead of you and dropped behind ----
+  const CHUNK = 40, chunks = new Map();
+  const asphalt = mat(0x3b3e44), grass = mat(0x5e9e4c), field = mat(0x4f8a41), paint = mat(0xf2f2ea);
+  const trunkGeo = new THREE.CylinderGeometry(0.15, 0.2, 1.6, 6), leafGeo = new THREE.ConeGeometry(1.3, 3.4, 8);
+  const trunkMat = mat(0x6b4a2f), leafMat = mat(0x2f6e3a);
+  function strip(s0, s1, xa, xb, dy, material, dash = 0) {
+    const pos = [], idx = [];
+    for (let s = s0, i = 0; s <= s1 + 1e-6; s += 1, i++) {
+      pos.push(...at(s, xa, dy), ...at(s, xb, dy));
+      if (s < s1 && (!dash || Math.floor(s / dash) % 2 === 0)) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);  // facing up
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, material);
+    m.receiveShadow = true;
+    return m;
+  }
+  function buildChunk(k) {
+    const s0 = k * CHUNK, s1 = s0 + CHUNK, group = new THREE.Group();
+    group.add(strip(s0, s1, -HALF_W, HALF_W, 0, asphalt));
+    group.add(strip(s0, s1, HALF_W, EDGE, -0.03, grass), strip(s0, s1, -EDGE, -HALF_W, -0.03, grass));
+    group.add(strip(s0, s1, EDGE, 60, -0.3, field), strip(s0, s1, -60, -EDGE, -0.3, field));
+    group.add(strip(s0, s1, -0.06, 0.06, 0.01, paint, 3));
+    group.add(strip(s0, s1, HALF_W - 0.3, HALF_W - 0.18, 0.01, paint), strip(s0, s1, -HALF_W + 0.18, -HALF_W + 0.3, 0.01, paint));
+    const n = 14, trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, n), leaves = new THREE.InstancedMesh(leafGeo, leafMat, n);
+    const m4 = new THREE.Matrix4();
+    for (let i = 0; i < n; i++) {
+      const s = rand(s0, s1), x = (Math.random() < 0.5 ? -1 : 1) * rand(EDGE + 2, 34), sc = rand(0.8, 1.5), p = at(s, x, -0.3);
+      trunks.setMatrixAt(i, m4.compose(V([p[0], p[1] + 0.8 * sc, p[2]]), new THREE.Quaternion(), new THREE.Vector3(sc, sc, sc)));
+      leaves.setMatrixAt(i, m4.compose(V([p[0], p[1] + 3 * sc, p[2]]), new THREE.Quaternion(), new THREE.Vector3(sc, sc, sc)));
+    }
+    trunks.castShadow = leaves.castShadow = true;
+    group.add(trunks, leaves);
+    scene.add(group);
+    return group;
+  }
+  function updateChunks() {
+    const first = Math.floor((game.s - 30) / CHUNK), last = Math.floor((game.s + 140) / CHUNK);
+    for (let k = first; k <= last; k++) if (!chunks.has(k)) chunks.set(k, buildChunk(k));
+    for (const [k, group] of chunks) {
+      if (k >= first && k <= last) continue;
+      group.traverse(o => { if (o.geometry && o.geometry !== trunkGeo && o.geometry !== leafGeo) o.geometry.dispose(); });
+      scene.remove(group);
+      chunks.delete(k);
+    }
+  }
+
+  // ---- Obstacles: orange = low (jump), blue = high (squat) ----
+  const stripes = (a, b) => {
+    const c = document.createElement("canvas"); c.width = 64; c.height = 16;
+    const g = c.getContext("2d");
+    for (let i = 0; i < 4; i++) { g.fillStyle = i % 2 ? b : a; g.fillRect(i * 16, 0, 16, 16); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  const orangeStripes = stripes("#f07a1a", "#ffffff"), blueStripes = stripes("#2a78d6", "#ffffff");
+  const W = 2 * HALF_W + 0.6;
+  const post = (x, hgt, m) => { const p = new THREE.Mesh(new THREE.BoxGeometry(0.16, hgt, 0.16), m); p.position.set(x, hgt / 2, 0); return p; };
+  function makeObstacle(o) {
+    const g = new THREE.Group(), grey = mat(0x9aa0a6);
+    if (o.type === "log") {
+      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, W, 14), mat(0x7a5232));
+      log.rotation.z = Math.PI / 2; log.position.y = 0.2;
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.205, 0.205, W * 0.9, 14), new THREE.MeshStandardMaterial({ map: orangeStripes.clone(), roughness: 0.7, transparent: true, opacity: 0.35 }));
+      band.rotation.z = Math.PI / 2; band.position.y = 0.2;
+      g.add(log, band);
+    } else if (o.type === "hurdle") {
+      const tex = orangeStripes.clone(); tex.repeat.set(W / 1.2, 1); tex.needsUpdate = true;
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(W, 0.18, 0.08), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }));
+      bar.position.y = o.h - 0.09;
+      g.add(bar, post(-W / 2, o.h, grey), post(W / 2, o.h, grey), post(0, o.h, grey));
+    } else if (o.type === "crates") {
+      const crate = mat(0xf07a1a, { roughness: 0.7 });
+      for (let x = -W / 2 + 0.35; x < W / 2; x += 0.72) {
+        const c = new THREE.Mesh(new THREE.BoxGeometry(0.66, o.h, o.d), crate);
+        c.position.set(x, o.h / 2, 0);
+        g.add(c);
+      }
+    } else {
+      // High: a striped beam (bar), a banner, or a tunnel roof, all leaving CLEARANCE underneath
+      const tex = blueStripes.clone(); tex.repeat.set(W / 1.2, 1); tex.needsUpdate = true;
+      const blue = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 });
+      const H = CLEARANCE + 0.02, top = o.type === "bar" ? 0.3 : o.type === "banner" ? 0.9 : 1.6;
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(W, top, o.d), o.type === "tunnel" ? mat(0x2a78d6, { roughness: 0.6 }) : blue);
+      roof.position.y = H + top / 2;
+      g.add(roof);
+      const postH = H + top, postMat = o.type === "tunnel" ? mat(0x1f5aa6) : grey;
+      if (o.type === "tunnel") for (const x of [-W / 2, W / 2]) {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(0.3, postH, o.d), postMat);
+        wall.position.set(x, postH / 2, 0);
+        g.add(wall);
+      } else g.add(post(-W / 2, postH, postMat), post(W / 2, postH, postMat));
+    }
+    g.traverse(m => { if (m.isMesh) m.castShadow = true; });
+    scene.add(g);
+    return g;
+  }
+  const obstacleMeshes = new Map();
+
+  // ---- The skater: side-on on a board, crouching when you squat ----
+  const skaterRoot = new THREE.Group(), rider = new THREE.Group();
+  const skin = mat(0xd8cbbb), shirt = mat(0x2a78d6), pants = mat(0x2c3140), helmet = mat(0xf07a1a, { roughness: 0.4 });
+  const board = new THREE.Group();
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.03, 0.82), mat(0x2b2b2b));
+  deck.position.y = 0.1;
+  board.add(deck);
+  for (const z of [-0.28, 0.28]) for (const x of [-0.09, 0.09]) {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.03, 12), mat(0xf2e3b3));
+    wheel.rotation.z = Math.PI / 2; wheel.position.set(x, 0.04, z);
+    board.add(wheel);
+  }
+  const limb = (r, len, m) => { const p = new THREE.Group(), mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 10), m); mesh.position.y = -len / 2; mesh.castShadow = true; p.add(mesh); return p; };
+  const legF = limb(0.06, 0.72, pants), legB = limb(0.06, 0.72, pants);
+  const upper = new THREE.Group();  // everything above the hips, lowered when crouching
+  legF.position.set(0, 0.95, -0.2); legB.position.set(0, 0.95, 0.2);
+  const hips = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.1, 4, 10), pants);
+  hips.position.y = 0.98;
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.36, 4, 10), shirt);
+  torso.position.y = 1.32;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), skin);
+  head.position.y = 1.72;
+  const lid = new THREE.Mesh(new THREE.SphereGeometry(0.135, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), helmet);
+  lid.position.y = 1.74;
+  const armF = limb(0.045, 0.5, shirt), armB = limb(0.045, 0.5, shirt);
+  armF.position.set(0, 1.5, -0.18); armB.position.set(0, 1.5, 0.18);
+  armF.rotation.x = 1.2; armB.rotation.x = -1.2;
+  for (const m of [hips, torso, head, lid]) m.castShadow = true;
+  upper.add(hips, torso, head, lid, armF, armB);
+  rider.add(legF, legB, upper);
+  skaterRoot.add(board, rider);
+  board.traverse(m => { if (m.isMesh) m.castShadow = true; });
+  scene.add(skaterRoot);
+  let crouch = 0;
+
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.fov = w / h < 1 ? 75 : 60;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+  resize();
+  document.addEventListener("pointerdown", () => sfx.init(), { once: true });
+
+  const camPos = new THREE.Vector3(...at(-6, 0, 2.5));
+  let lastFrame = performance.now(), hudAt = 0;
+  function frame() {
+    requestAnimationFrame(frame);
+    const now = performance.now(), dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    drainEvents();
+    if (streamReady()) {
+      simulate(deviceNow());
+      drainEvents();
+      if (game.phase === "menu") game.angle = thighAngle(quatAt(deviceNow()));
+    }
+    updateChunks();
+
+    // Skater: follows the road, crouches with you, tumbles in a crash
+    const crashing = game.clock < game.crashUntil && game.phase !== "menu";
+    const p = at(game.s, 0, game.h);
+    skaterRoot.position.copy(V(p));
+    skaterRoot.rotation.set(0, -Math.atan(roadDX(game.s)), 0);
+    crouch += ((game.ducking && !game.air ? 1 : 0) - crouch) * Math.min(1, dt * 14);
+    if (crashing) {
+      const f = 1 - (game.crashUntil - game.clock) / 1200;
+      rider.rotation.set(-f * 2.2, 0, 0);
+      rider.position.set(0, -0.3 * f, -f * 1.2);
+    } else {
+      rider.rotation.set(0, 0, 0);
+      rider.position.set(0, 0, 0);
+      const drop = crouch * (STAND_H - DUCK_H);
+      upper.position.y = -drop;
+      legF.scale.y = legB.scale.y = 1 - drop / 0.95;
+    }
+    board.rotation.set(game.air ? clamp(game.vh / 5, -1, 1) * 0.3 : 0, 0, 0);
+    skaterRoot.visible = !(game.clock < game.safeUntil && game.phase === "play" && Math.floor(now / 120) % 2 === 0);
+    sfx.ride(game.phase === "play" && !game.paused && !game.air && !crashing);
+
+    for (const o of obstacles) {
+      let g = obstacleMeshes.get(o);
+      if (!g) { g = makeObstacle(o); obstacleMeshes.set(o, g); }
+      g.position.copy(V(at(o.s, 0)));
+      g.rotation.y = -Math.atan(roadDX(o.s));
+      g.visible = !o.hit;
+    }
+    for (const [o, g] of obstacleMeshes) {
+      if (obstacles.includes(o)) continue;
+      g.traverse(m => { if (m.geometry) m.geometry.dispose(); });
+      scene.remove(g);
+      obstacleMeshes.delete(o);
+    }
+
+    // Chase camera: behind and above, lower when you duck so the gap reads clearly
+    const target = V(at(game.s - 6, 0, 2.5 - crouch * 0.4 + game.h * 0.4));
+    if (camPos.distanceTo(target) > 20) camPos.copy(target);
+    else camPos.lerp(target, 1 - Math.exp(-dt * 6));
+    camera.position.copy(camPos);
+    camera.lookAt(...at(game.s + 9, 0, 1.0));
+    sun.position.copy(V(add(p, [6, 14, 4])));
+    sun.target.position.copy(V(p));
+
+    // Squat gauge
+    const maxDeg = Math.max(60, LV.duck * 2);
+    document.getElementById("g-fill").style.height = `${clamp(game.angle / maxDeg, 0, 1) * 100}%`;
+    document.getElementById("g-fill").classList.toggle("on", game.ducking);
+    document.getElementById("g-mark").style.bottom = `${LV.duck / maxDeg * 100}%`;
+    if (now - hudAt > 150) {
+      hudAt = now;
+      document.getElementById("g-deg").textContent = `${Math.round(game.angle)}°`;
+      if (game.phase !== "menu") document.getElementById("s-score").textContent = runScore();
+    }
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>

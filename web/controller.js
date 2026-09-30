@@ -1,10 +1,8 @@
-#pragma once
-
-// Shared script served at "/controller.js", used by the 3D games on top of /motion.js: the
+// Shared script at "/controller.js", used by the 3D games on top of /motion.js: the
 // stick as a hand-held controller. Keeps a short history of its orientation so a game can
 // sample the pose at any moment, keeps game time in step with the stick's clock, and reports
 // button presses and swings.
-static const char CONTROLLER_JS[] PROGMEM = R"JS(
+
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
@@ -126,4 +124,3 @@ function resetStream() {
 
 const deviceNow = () => performance.now() - LAG_MS - ctl.offset;
 const streamReady = () => ctl.offset !== null && ctl.poses.length > 0;
-)JS";

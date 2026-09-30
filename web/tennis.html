@@ -1,9 +1,9 @@
-#pragma once
-
-// Tennis game served at "/tennis". The stick is the racket grip: its orientation drives a 3D
-// racket on the end of a modelled arm. Play a match against a computer opponent (who always
-// serves) or practise against a ball machine, on one of three levels.
-static const char TENNIS_HTML[] PROGMEM = R"HTML(<!doctype html>
+<!doctype html>
+<!--
+  Tennis game at "/tennis". The stick is the racket grip: its orientation drives a 3D
+  racket on the end of a modelled arm. Play a match against a computer opponent (who always
+  serves) or practise against a ball machine, on one of three levels.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1079,4 +1079,3 @@ function buildScene(THREE) {
 </script>
 </body>
 </html>
-)HTML";

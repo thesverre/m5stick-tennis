@@ -9,6 +9,8 @@ over WiFi and serves web pages you open in any browser on the same network:
   the bolts a training droid fires at you and send them back to destroy it.
 - **Skate** (`/skate`): an endless downhill skateboard run where the stick is the board.
   Tilt to carve around obstacles and flick the nose up to jump.
+- **Runner** (`/runner`): a whole-body game with the stick in your trouser pocket. Your
+  skater rolls on its own; you really jump over low obstacles and squat under high ones.
 - **Motion** (`/`): live gyro/accelerometer charts, a 3D model of the stick that follows
   its orientation, and an air mouse you steer by turning the stick.
 
@@ -128,6 +130,31 @@ Score is distance in metres plus 10 per coin and 25 per ramp jump. The run speed
 further you get, and your best score per level is saved in the browser. Tilt comes from
 gravity, so this game never drifts and needs no recentering.
 
+## Playing the runner game
+
+1. Put the stick in a snug front trouser pocket and stand facing the screen with some clear
+   floor around you.
+2. Pick a level and press **Start** or **Space**. Stand still for 2 seconds while the stick
+   learns how it sits in your pocket.
+3. **Orange** obstacles are low: **jump**. A small hop of a few centimetres is enough.
+   **Blue** ones are high: **squat** until you're under them, and stay down for long ones.
+4. The squat gauge on the left shows how far your thigh is tilted, with a mark where it
+   counts. Each jump's real height pops up on screen.
+
+| Level  | What to expect |
+|--------|----------------|
+| Easy   | 3–4 s between obstacles, a 22° squat is enough, JUMP!/DUCK! cues, 3 lives. |
+| Medium | 2.4–3 s apart, some in pairs, 28° squats, longer holds. 2 lives. |
+| Hard   | 1.7–2.4 s apart, many pairs, 33° squats, tunnels up to 1.5 s long, no cues. 1 life. |
+
+The speed is the same on every level. At the end you get your score, distance, obstacles
+cleared, jumps, squats and best jump height.
+
+How it detects you: a jump is a push-off above 1.3 g followed by the free fall of being in the
+air (under 0.5 g), and its height comes from the time in the air. A squat is your thigh tilting
+forward from where it was when you stood still. If the stick shifts in your pocket, the game
+re-centres itself while you stand still.
+
 ## Air mouse
 
 On the main page, hold the stick like a remote: screen up, top end pointing at your
@@ -136,16 +163,22 @@ to draw), and the side button re-centers the pointer.
 
 ## Tuning
 
-- **Tennis difficulty:** the `LEVELS` table near the top of the script in `src/tennis.h`
+- **Tennis difficulty:** the `LEVELS` table near the top of the script in `web/tennis.html`
   sets each level's timing window, hitting area, aim and net help, and the opponent's
   speed, error rate and reactions.
-- **Saber difficulty:** the `LEVELS` table in `src/saber.h` sets each level's warning time,
+- **Saber difficulty:** the `LEVELS` table in `web/saber.html` sets each level's warning time,
   bolt speed, bursts, blade reach and the angle a block needs to hit the droid.
-- **Skate difficulty:** the `LEVELS` table in `src/skate.h` sets speeds, time between
+- **Runner difficulty:** the `LEVELS` table in `web/runner.html` sets time between obstacles,
+  how long high ones are, jump length, squat angle, pairs, cues and lives; the detection
+  thresholds (`PUSH_G`, `AIR_G`, `LAND_G`) are just above it.
+- **Skate difficulty:** the `LEVELS` table in `web/skate.html` sets speeds, time between
   obstacles, lives and landings; `STEER`, `LEAN_FULL` and `OLLIE_DPS` set how the stick
   steers and how hard a flick has to be to jump.
 - **Air mouse:** `JITTER_DPS` (dead zone for hand shake) and `CLICK_FREEZE_MS` (pointer
-  freeze around clicks) in `src/page.h`.
+  freeze around clicks) in `web/index.html`.
+
+After editing anything in `web/`, rebuild and upload with `pio run -t upload`; the pages are
+compressed into the firmware automatically as part of the build.
 
 ## How it works
 
@@ -159,16 +192,20 @@ WebSocket at `/ws`. The pages do all the processing in the browser:
   arm model: the hands move with the direction the stick points.
 - The games' physics runs in 2 ms steps against the stick's interpolated motion, so fast
   swings don't pass through the ball or the bolts.
+- The pages are gzipped at build time and stored in flash that way (about 210 KB of pages
+  take about 70 KB); the stick sends them compressed and the browser unpacks them.
 
 ## Project layout
 
 | File | Contents |
 |------|----------|
 | `src/main.cpp` | WiFi, IMU sampling, WebSocket stream, web server |
-| `src/motion.h` | Shared `/motion.js`: stream client and orientation filter |
-| `src/controller.h` | Shared `/controller.js` for the games: pose history, timing, recenter, buttons, swing speed |
-| `src/page.h` | Motion page (`/`): charts, 3D stick, air mouse |
-| `src/tennis.h` | Tennis game (`/tennis`) |
-| `src/saber.h` | Saber game (`/saber`) |
-| `src/skate.h` | Skate game (`/skate`) |
+| `web/index.html` | Motion page (`/`): charts, 3D stick, air mouse |
+| `web/tennis.html` | Tennis game (`/tennis`) |
+| `web/saber.html` | Saber game (`/saber`) |
+| `web/skate.html` | Skate game (`/skate`) |
+| `web/runner.html` | Runner game (`/runner`) |
+| `web/motion.js` | Shared `/motion.js`: stream client and orientation filter |
+| `web/controller.js` | Shared `/controller.js` for the games: pose history, timing, recenter, buttons, swing speed |
+| `tools/embed_web.py` | Build step: gzips `web/` into `include/web_assets.h` (generated, not committed) |
 | `include/secrets.h.example` | Template for your WiFi details |

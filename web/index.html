@@ -1,8 +1,8 @@
-#pragma once
-
-// Web UI served at "/". Receives IMU samples over the /ws WebSocket and draws live charts
-// plus a 3D model of the stick that follows its orientation.
-static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
+<!doctype html>
+<!--
+  Web UI at "/". Receives IMU samples over the /ws WebSocket and draws live charts
+  plus a 3D model of the stick that follows its orientation.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -122,6 +122,7 @@ footer { color: var(--muted); font-size: 12px; }
     <a class="navlink" href="/tennis">Tennis game →</a>
     <a class="navlink" href="/saber">Saber game →</a>
     <a class="navlink" href="/skate">Skate game →</a>
+    <a class="navlink" href="/runner">Runner game →</a>
     <button id="pause">Pause</button>
   </header>
 
@@ -603,4 +604,3 @@ connectStream({
 </script>
 </body>
 </html>
-)HTML";

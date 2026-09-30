@@ -1,9 +1,9 @@
-#pragma once
-
-// Lightsaber training game served at "/saber". First-person: the stick is the saber's hilt.
-// A training droid hovers in front of you, marks a spot, and fires a bolt at it; get the blade
-// across the bolt's path to block it and send it back. Waves of droids, or free swing.
-static const char SABER_HTML[] PROGMEM = R"HTML(<!doctype html>
+<!doctype html>
+<!--
+  Lightsaber training game at "/saber". First-person: the stick is the saber's hilt.
+  A training droid hovers in front of you, marks a spot, and fires a bolt at it; get the blade
+  across the bolt's path to block it and send it back. Waves of droids, or free swing.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -872,4 +872,3 @@ function buildScene(THREE) {
 </script>
 </body>
 </html>
-)HTML";
