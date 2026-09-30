@@ -1,0 +1,1135 @@
+#pragma once
+
+// Tennis game served at "/tennis". The stick is the racket grip: its orientation drives a 3D
+// racket on the end of a modelled arm. Play a match against a computer opponent (who always
+// serves) or practise against a ball machine, on one of three levels.
+static const char TENNIS_HTML[] PROGMEM = R"HTML(<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M5StickC Tennis</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: rgba(252,252,251,0.9); --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --border: rgba(11,11,11,0.10); --accent: #2a78d6; --good: #0ca30c; --bad: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: rgba(26,26,25,0.88); --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+    --border: rgba(255,255,255,0.10); --accent: #3987e5;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: #bcd9f0; color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#view { position: fixed; inset: 0; }
+#view canvas { display: block; width: 100%; height: 100%; }
+.panel { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 14px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+#brand { top: 12px; left: 12px; display: flex; flex-direction: column; gap: 2px; }
+#brand h1 { font-size: 17px; margin: 0; }
+#brand a { color: var(--accent); text-decoration: none; font-size: 13px; }
+.status { color: var(--ink-2); display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--good); } .dot.err { background: var(--bad); }
+#hud { top: 12px; right: 12px; min-width: 250px; }
+.sb { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.sb th { color: var(--muted); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; text-align: right; padding: 0 0 2px 14px; }
+.sb td { font-size: 20px; font-weight: 600; text-align: right; padding: 0 0 0 14px; }
+.sb td:first-child { text-align: left; font-size: 14px; font-weight: 500; color: var(--ink-2); padding-left: 0; }
+.tiles { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 18px; }
+.stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.stat .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hud-sub { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); color: var(--ink-2); font-size: 12px; }
+.hud-sub b { color: var(--ink); font-variant-numeric: tabular-nums; }
+#controls { bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px;
+  max-width: calc(100% - 24px); }
+.hint { color: var(--ink-2); font-size: 12px; }
+button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#banner { position: fixed; top: 26%; left: 50%; transform: translate(-50%, -50%) scale(.9); pointer-events: none;
+  font: 800 56px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 3px 16px rgba(0,0,0,.35);
+  opacity: 0; transition: opacity .25s, transform .25s; text-align: center; white-space: nowrap; }
+#banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+#banner small { display: block; font-size: 20px; font-weight: 600; margin-top: 8px; }
+.dialog { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100% - 32px)); padding: 18px 20px;
+  max-height: calc(100% - 32px); overflow: auto; }
+.dialog h2 { margin: 0 0 8px; font-size: 20px; }
+.dialog ol { margin: 0 0 12px; padding-left: 20px; color: var(--ink-2); }
+.dialog li { margin-bottom: 4px; }
+.label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-top: 10px; }
+.seg { display: flex; gap: 6px; margin: 4px 0; }
+.seg button { flex: 1; }
+.seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.desc { color: var(--ink-2); font-size: 12px; min-height: 2.9em; }
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.err { color: var(--bad); }
+@media (max-width: 720px) {
+  #hud { top: auto; bottom: 70px; left: 12px; right: 12px; min-width: 0; }
+  #controls .hint { display: none; }
+  #banner { font-size: 40px; }
+}
+</style>
+</head>
+<body>
+<div id="view"></div>
+
+<div class="panel" id="brand">
+  <h1>M5StickC Tennis</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+  <a href="/">← Motion page</a>
+</div>
+
+<div class="panel" id="hud" hidden>
+  <table class="sb" id="hud-match">
+    <tr><th></th><th>Games</th><th>Points</th></tr>
+    <tr><td>You</td><td id="g0">0</td><td id="p0">0</td></tr>
+    <tr><td>Opponent</td><td id="g1">0</td><td id="p1">0</td></tr>
+  </table>
+  <div class="tiles" id="hud-practice">
+    <div class="stat"><div class="k">In</div><div class="v" id="s-in">0</div></div>
+    <div class="stat"><div class="k">Streak</div><div class="v" id="s-streak">0</div></div>
+    <div class="stat"><div class="k">Best streak</div><div class="v" id="s-best">0</div></div>
+  </div>
+  <div class="hud-sub"><span id="lvl-name">Easy</span> · Swing <b id="s-swing">–</b> · Best <b id="s-bestswing">–</b> km/h</div>
+</div>
+
+<div class="panel" id="controls">
+  <span class="hint" id="play-hint">Side button: recenter · M5 button: pause</span>
+  <button id="recenter">Recenter</button>
+  <button id="pause">Pause</button>
+  <button id="menu-btn">Menu</button>
+</div>
+
+<div id="banner"></div>
+
+<div class="panel dialog" id="menu">
+  <h2>Grab your racket</h2>
+  <ol>
+    <li>Hold the stick in your fist like a racket grip, top end toward the racket head,
+      screen facing the same way as your palm (screen = strings).</li>
+    <li>Point it at your screen and press the <b>side button</b> to line the racket up.</li>
+    <li>Meet the ball as it reaches the white ring. You stay put: every ball comes to your forehand or backhand.</li>
+  </ol>
+  <div class="label">Level</div>
+  <div class="seg" id="levels">
+    <button data-level="easy">Easy</button><button data-level="medium">Medium</button><button data-level="hard">Hard</button>
+  </div>
+  <div class="desc" id="level-desc"></div>
+  <div class="label">Mode</div>
+  <div class="seg" id="modes"><button data-mode="match">Match</button><button data-mode="practice">Practice</button></div>
+  <div class="desc" id="mode-desc"></div>
+  <div class="err" id="menu-err"></div>
+  <div class="actions"><button class="primary" id="start">Start</button><span class="hint">or press the M5 button</span></div>
+</div>
+
+<div class="panel dialog" id="over" hidden>
+  <h2 id="over-title"></h2>
+  <div class="desc" id="over-sub"></div>
+  <div class="actions"><button class="primary" id="again">Play again</button><button id="to-menu">Menu</button></div>
+</div>
+
+<script src="/motion.js"></script>
+<script>
+// ---- Game model (plain JS, three.js coordinates) ----
+// Three.js space: X right, Y up, Z toward the viewer. You stand just behind the near baseline
+// at z = 0 and face the net (-Z); the opponent is at the far end. Lengths in m, speeds in m/s.
+const G = 9.81;
+const NET_Z = -11.885, FAR_Z = -23.77, HALF_SINGLES = 4.115, HALF_DOUBLES = 5.485, SERVICE = 6.40;
+const NET_HALF = 6.4, NET_CENTER_H = 0.914, NET_POST_H = 1.07;
+const R_BALL = 0.04;                     // a little larger than a real ball (3.3 cm) so it reads on screen
+const BOUNCE_E = 0.75, BOUNCE_KEEP = 0.9;  // court: vertical rebound, share of horizontal speed kept
+
+// Racket and arm model. The stick only knows its orientation, so the racket's position is
+// modelled: the hand sits at the end of an arm hanging from the shoulder, pointing roughly the
+// way the racket points (drooping a little), like 3-DOF VR controllers do.
+const SHOULDER = [0.2, 1.35, 0.6], ARM = 0.6, DROOP = 0.5;
+const HEAD_Y = 0.46, HEAD_A = 0.17, HEAD_B = 0.13;  // string bed centre (from the hand), half length, half width
+const FORE_X = 1.15, BACK_X = -0.8;  // where your racket head reaches on the forehand / backhand side
+
+// Hitting physics. HIT_E: how much of the ball's own speed (relative to the racket) comes back
+// off the strings; HIT_GRIP: share of sliding speed across the strings kept. Hit balls fall
+// SPIN_G (yours) or OPP_SPIN (the opponent's) times faster until they bounce, like topspin.
+const HIT_E = 0.4, HIT_GRIP = 0.6, SPIN_G = 1.8, OPP_SPIN = 1.3;
+const AIM_AT = [0, -18];  // aim help pulls your shots toward here
+
+// Levels. Easy only asks for timing: any forward swing within `window` ms of the ball reaching
+// the ring hits it, and the timing picks the direction. Medium and Hard need the racket to
+// really meet the ball, and the string face's tilt decides where it goes:
+//  assist   — hit area enlarged this many times (depth is hard to judge on a screen)
+//  aim      — share of the way a shot is turned toward the middle of the far court
+//  netClear — lift a shot heading for the net to clear it by this much (m); 0 = none
+//  cue      — show the shrinking timing ring
+// Opponent: shot/serve speed (m/s before the bounce), heights your contact points vary
+// over, chance of an error per shot / fault per serve, run speed, reaction time.
+const LEVELS = {
+  easy: {
+    label: "Easy", desc: "Slow balls. Swing as the shrinking ring meets the white one — only timing counts: early goes cross-court, late goes down the line.",
+    timing: true, window: 220, assist: 0, aim: 0, netClear: 0, cue: true,
+    shot: 11, serve: 16, heights: [1.0, 1.15], oppErr: 0.25, fault: 0.2, oppRun: 4, oppReact: 350,
+  },
+  medium: {
+    label: "Medium", desc: "The racket must meet the ball, and its tilt steers the shot — with a big sweet spot and some help aiming and clearing the net.",
+    timing: false, window: 0, assist: 2.0, aim: 0.7, netClear: 0.25, cue: true,
+    shot: 15, serve: 21, heights: [0.95, 1.25], oppErr: 0.12, fault: 0.12, oppRun: 5.5, oppReact: 250,
+  },
+  hard: {
+    label: "Hard", desc: "Real-size strings, fast balls, no help: open or close the face to clear the net, angle it to aim.",
+    timing: false, window: 0, assist: 1.1, aim: 0.45, netClear: 0, cue: false,
+    shot: 18, serve: 26, heights: [0.85, 1.4], oppErr: 0.05, fault: 0.08, oppRun: 7, oppReact: 150,
+  },
+};
+const MODES = {
+  match: "Play the computer: it serves every point. Real tennis scoring, first to 3 games wins.",
+  practice: "A ball machine feeds you balls. Count how many you get in, and your best streak.",
+};
+const GAMES_TO_WIN = 3;
+const OPP_BASE_Z = -24.3;     // where the opponent waits, just behind their baseline
+const MACHINE = [0, 1.0, -22];
+
+const LAG_MS = 30;   // render this far behind the newest sample, so there's data on both sides
+const STEP_MS = 2;   // physics sub-step: a fast racket head moves ~4 cm per step
+
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const unit = a => scale(a, 1 / Math.hypot(...a));
+const mix = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+const netHeight = x => NET_CENTER_H + (NET_POST_H - NET_CENTER_H) * Math.min(1, Math.abs(x) / NET_HALF);
+
+const settings = { level: "easy", mode: "match" };
+try { Object.assign(settings, JSON.parse(localStorage.getItem("tennis") || "{}")); } catch (e) { /* defaults */ }
+if (!LEVELS[settings.level]) settings.level = "easy";
+if (!MODES[settings.mode]) settings.mode = "match";
+let LV = LEVELS[settings.level];
+
+const game = {
+  yaw0: 0,                 // heading that counts as "toward the net" (world frame, radians)
+  lastSeq: -1, btn: 0,
+  poses: [],               // recent {t (device ms), q} from the orientation filter
+  offset: null,            // local ms − device ms, from the fastest-arriving samples
+  simT: null, simPose: null,
+  clock: 0,                // game time (ms): runs with the simulation, stops while paused
+  phase: "menu",           // "menu" | "play" | "over"
+  paused: false,
+  swing: { active: false, peak: 0 }, prevHead: null, bestSwing: 0,
+  ins: 0, streak: 0, bestStreak: 0, nextFeedAt: 0,  // practice
+};
+const match = { games: [0, 0], points: [0, 0], serveNo: 1, pointNo: 0, nextAt: 0 };  // [you, opponent]
+const opp = { x: -1.2, z: OPP_BASE_Z, goal: [-1.2, OPP_BASE_Z], moveAt: 0, speed: 0, plan: null, anim: null };
+// The ball in play: position, velocity, gravity until its first bounce (g1), who hit it last
+// ("you" | "opp" | "machine"), serve?, bounces since that hit, whether its first bounce was in
+// (inBounce), point over (done), and for balls coming to you: where/when it reaches your
+// hitting zone (aim, contactT) and, on Easy, a swing already made (swing).
+let ball = null;
+const events = [];         // for the page: sounds, banners, numbers
+
+// ---- Racket pose ----
+// Stick orientation → racket pose in three.js space. M maps racket (= stick body) axes into
+// the scene: body Y runs along the racket toward the head, body Z is the string-face normal.
+function racketPose(q) {
+  const R = rotationMatrix(q);
+  const c = Math.cos(-game.yaw0), s = Math.sin(-game.yaw0);
+  const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let col = 0; col < 3; col++) {
+    const wx = R[0][col], wy = R[1][col], wz = R[2][col];
+    const hx = c * wx - s * wy, hy = s * wx + c * wy;  // turn so the recentered heading is +Y
+    M[0][col] = hx; M[1][col] = wz; M[2][col] = -hy;    // world (Z up, Y ahead) → three (Y up, −Z ahead)
+  }
+  const u = [M[0][1], M[1][1], M[2][1]], v = [M[0][0], M[1][0], M[2][0]], n = [M[0][2], M[1][2], M[2][2]];
+  const hand = add(SHOULDER, scale(unit(add(u, [0, -DROOP, 0])), ARM));
+  return { M, u, v, n, hand, head: add(hand, scale(u, HEAD_Y)) };
+}
+
+function nlerp(a, b, f) {
+  const sgn = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0 ? -1 : 1;
+  const q = a.map((v, i) => v + (sgn * b[i] - v) * f), n = Math.hypot(...q);
+  return q.map(v => v / n);
+}
+
+function quatAt(t) {
+  const p = game.poses, n = p.length;
+  if (t >= p[n - 1].t) return p[n - 1].q;
+  let j = n - 1;
+  while (j > 0 && p[j - 1].t > t) j--;
+  if (j === 0) return p[0].q;
+  return nlerp(p[j - 1].q, p[j].q, (t - p[j - 1].t) / (p[j].t - p[j - 1].t));
+}
+
+const poseAt = t => racketPose(quatAt(t));
+
+// Line the racket up with the net: whatever way the stick points now becomes straight ahead.
+function recenter() {
+  if (!orient.q) return;
+  const R = rotationMatrix(orient.q);
+  game.yaw0 = Math.atan2(-R[0][1], R[1][1]);
+  game.simPose = null;  // the racket jumps; don't let that count as a swing
+  game.prevHead = null;
+  events.push({ type: "recenter" });
+}
+
+function onBatch(batch) {
+  // A big batch is history (on connect) or a backlog after a stall: feed the filter, but
+  // don't act on its buttons or swings
+  const replay = batch.length > 8;
+  const newest = batch[batch.length - 1];
+  const arrive = performance.now() - newest.t;
+  game.offset = game.offset === null || arrive < game.offset ? arrive : game.offset + (arrive - game.offset) * 0.002;
+
+  for (const s of batch) {
+    if (s.seq <= game.lastSeq) continue;  // history can overlap the live stream
+    game.lastSeq = s.seq;
+    const dt = updateOrientation(s);
+    game.poses.push({ t: s.t, q: [...orient.q] });
+
+    const pressed = s.b & ~game.btn;
+    game.btn = s.b;
+    if (replay || !dt) continue;
+    if (pressed & 2) recenter();
+    if (pressed & 1) onM5();
+
+    // Swing speed: how fast the modelled racket head moves
+    const head = racketPose(orient.q).head;
+    if (game.prevHead) {
+      const speed = Math.hypot(...sub(head, game.prevHead)) / dt, sw = game.swing;
+      if (speed > 4) { sw.active = true; sw.peak = Math.max(sw.peak, speed); }
+      else if (sw.active && speed < 2) {
+        sw.active = false;
+        game.bestSwing = Math.max(game.bestSwing, sw.peak);
+        events.push({ type: "swing", speed: sw.peak });
+        sw.peak = 0;
+      }
+    }
+    game.prevHead = head;
+  }
+  while (game.poses.length > 2 && game.poses[0].t < newest.t - 2000) game.poses.shift();
+}
+
+// ---- Shot planning ----
+// A shot from p0 toward you that bounces once (bounce z within [zMin, zMax]) and then passes
+// your hitting zone at x = aim[0], z = aim[2], as close to height aim[1] as the speed allows.
+// Scans where it bounces; returns the velocity, the actual contact point, and flight time.
+function planShot(p0, aim, V1, g1, zMin, zMax) {
+  const dx = aim[0] - p0[0], dz = aim[2] - p0[2], D = Math.hypot(dx, dz), ux = dx / D, uz = dz / D;
+  const V2 = V1 * BOUNCE_KEEP, dNet = (NET_Z - p0[2]) / uz;  // path distance to the net
+  let best = null;
+  for (let d2 = 0.5; d2 < D - dNet; d2 += 0.1) {
+    const zb = aim[2] - uz * d2;
+    if (zb < zMin || zb > zMax) continue;
+    const T1 = (D - d2) / V1, T2 = d2 / V2;
+    const vy0 = (R_BALL - p0[1] + g1 * T1 * T1 / 2) / T1;
+    const va = -BOUNCE_E * (vy0 - g1 * T1);
+    const y = R_BALL + va * T2 - G * T2 * T2 / 2;
+    const tn = dNet / V1, yNet = p0[1] + vy0 * tn - g1 * tn * tn / 2;
+    if (y < 0.3 || yNet < netHeight(p0[0] + ux * dNet) + R_BALL + 0.15) continue;
+    const err = Math.abs(y - aim[1]);
+    if (!best || err < best.err) best = { err, v: [ux * V1, vy0, uz * V1], contact: [aim[0], y, aim[2]], time: (T1 + T2) * 1000 };
+  }
+  return best;
+}
+
+// planShot at the wanted speed, or the nearest speed that works
+function planTo(p0, aim, V1, g1, zMin, zMax) {
+  for (const k of [1, 0.9, 1.1, 0.8, 1.2, 0.7, 1.35, 0.6]) {
+    const plan = planShot(p0, aim, V1 * k, g1, zMin, zMax);
+    if (plan) return plan;
+  }
+  return null;
+}
+
+// A missed shot: into the net, long, or wide (for a serve: into the wrong box)
+function errorShot(p0, targetX, serve, V1, g1) {
+  const kind = ["net", "long", "wide"][Math.floor(Math.random() * 3)];
+  const to = kind === "net" ? [(p0[0] + targetX) / 2, 0.45, NET_Z]
+    : kind === "long" ? [targetX, R_BALL, serve ? NET_Z + SERVICE + 1.5 : 2.2]
+    : serve ? [-Math.sign(targetX) * 1.6, R_BALL, NET_Z + 3.5] : [Math.sign(targetX) * (HALF_SINGLES + 0.9), R_BALL, -5];
+  const T = Math.hypot(to[0] - p0[0], to[2] - p0[2]) / V1;
+  return { v: [(to[0] - p0[0]) / T, (to[1] - p0[1] + g1 * T * T / 2) / T, (to[2] - p0[2]) / T], contact: null, time: null };
+}
+
+// Velocity from p0 that lands at `to`, slowed (a loopier ball) until it clears the net by `clear`
+function aimAt(p0, to, V, g1, clear) {
+  let v;
+  for (let k = 0; k < 10; k++, V *= 0.9) {
+    const T = Math.hypot(to[0] - p0[0], to[2] - p0[2]) / V;
+    v = [(to[0] - p0[0]) / T, (R_BALL - p0[1] + g1 * T * T / 2) / T, (to[2] - p0[2]) / T];
+    const tn = (p0[2] - NET_Z) / -v[2];
+    if (p0[1] + v[1] * tn - g1 * tn * tn / 2 > netHeight(p0[0] + v[0] * tn) + R_BALL + clear) break;
+  }
+  return v;
+}
+
+function incoming(p0, plan, g1, by, serve, targetX) {
+  ball = { p: [...p0], v: plan.v, g1, by, serve, box: Math.sign(targetX), bounces: 0, inBounce: false, done: false,
+           toss: false, born: game.clock, aim: plan.contact, contactT: plan.time ? game.clock + plan.time : null, swing: null };
+}
+
+// ---- Opponent ----
+const servePos = () => [match.pointNo % 2 === 0 ? -1.2 : 1.2, OPP_BASE_Z];
+
+function oppShot(p0, serve) {
+  // Serves go diagonally: from their right (deuce court) to your forehand, from their left to your backhand
+  const fore = serve ? match.pointNo % 2 === 0 : Math.random() < 0.6;
+  const x = (fore ? FORE_X : BACK_X) + rand(-0.08, 0.08);
+  const V = serve ? LV.serve : LV.shot * rand(0.92, 1.08), g1 = G * OPP_SPIN;
+  const miss = Math.random() < (serve ? LV.fault : LV.oppErr);
+  const plan = (!miss && planTo(p0, [x, rand(...LV.heights), SHOULDER[2]], V, g1,
+    serve ? NET_Z + 0.3 : NET_Z + 1, serve ? NET_Z + SERVICE - 0.3 : -0.8)) || errorShot(p0, x, serve, V, g1);
+  incoming(p0, plan, g1, "opp", serve, x);
+  events.push({ type: "hit", who: "opp" });
+}
+
+function startServe() {
+  const [sx, sz] = servePos();
+  opp.x = sx; opp.z = sz; opp.goal = [sx, sz]; opp.plan = null;
+  opp.anim = { kind: "serve", tHit: game.clock + 900 };
+  // Toss: up from the hand, reaching ~2.75 m as the racket meets it 0.9 s later
+  ball = { p: [sx - 0.15, 1.4, sz + 0.35], v: [0, 5.9, 0], g1: G, by: "opp", toss: true, serve: true, born: game.clock,
+           bounces: 0, inBounce: false, done: false, aim: null, contactT: null, swing: null };
+}
+
+// Where (and when) the opponent can meet your ball: after its bounce, as it comes down
+// through 1.2 m, or when it gets deep behind their baseline. null if it's going out.
+function predictOppContact() {
+  let p = [...ball.p], v = [...ball.v], bounces = 0, t = game.clock;
+  for (let i = 0; i < 1000; i++) {
+    const s = 0.005, g = bounces ? G : ball.g1;
+    p = [p[0] + v[0] * s, p[1] + v[1] * s - g * s * s / 2, p[2] + v[2] * s];
+    v[1] -= g * s; t += 5;
+    if (p[1] < R_BALL && v[1] < 0) {
+      if (++bounces > 1) return null;
+      if (!(p[2] < NET_Z && p[2] > FAR_Z - R_BALL && Math.abs(p[0]) < HALF_SINGLES + R_BALL)) return null;
+      p[1] = R_BALL; v = [v[0] * BOUNCE_KEEP, -v[1] * BOUNCE_E, v[2] * BOUNCE_KEEP];
+    }
+    if (bounces === 1 && ((v[1] < 0 && p[1] <= 1.2) || p[2] <= -25.5)) return { p, t };
+  }
+  return null;
+}
+
+function oppRespond() {
+  const pr = predictOppContact();
+  if (!pr) return;
+  const fore = pr.p[0] <= opp.x;  // ball on their right (−x): forehand
+  const goal = [clamp(pr.p[0] + (fore ? 1.1 : -1.1), -7, 7), clamp(pr.p[2] - 0.35, -27, -14)];
+  opp.plan = { tHit: pr.t, goal };
+  opp.goal = goal;
+  opp.moveAt = game.clock + LV.oppReact;
+  opp.anim = { kind: fore ? "fore" : "back", tHit: pr.t };
+}
+
+function oppContact() {
+  const plan = opp.plan;
+  opp.plan = null;
+  opp.goal = [0, OPP_BASE_Z]; opp.moveAt = game.clock + 250;
+  if (ball.done || !ball.inBounce) return false;
+  if (Math.hypot(plan.goal[0] - opp.x, plan.goal[1] - opp.z) > 0.45) return false;  // didn't get there
+  oppShot(ball.p, false);
+  return true;
+}
+
+function stepOpp(h) {
+  if (game.clock < opp.moveAt) { opp.speed = 0; return; }
+  const dx = opp.goal[0] - opp.x, dz = opp.goal[1] - opp.z, d = Math.hypot(dx, dz), step = LV.oppRun * h / 1000;
+  if (d < 1e-3) { opp.speed = 0; return; }
+  const k = Math.min(1, step / d);
+  opp.x += dx * k; opp.z += dz * k;
+  opp.speed = Math.min(d, step) / (h / 1000);
+}
+
+// ---- Scoring ----
+const CALL = ["0", "15", "30", "40"];
+function pointLabels() {
+  const [a, b] = match.points;
+  if (a >= 3 && b >= 3) return a === b ? ["40", "40"] : a > b ? ["AD", "40"] : ["40", "AD"];
+  return [CALL[a], CALL[b]];
+}
+function scoreCall() {
+  const [a, b] = match.points;
+  if (a >= 3 && b >= 3) return a === b ? "Deuce" : a > b ? "Advantage you" : "Advantage opponent";
+  return a === b ? `${CALL[a]} all` : `${CALL[a]}–${CALL[b]}`;
+}
+
+// who: 0 = you, 1 = opponent
+function pointTo(who, reason) {
+  ball.done = true;
+  opp.plan = null;
+  match.points[who]++;
+  match.pointNo++;
+  match.serveNo = 1;
+  let call = null;
+  const [a, b] = match.points;
+  if (Math.max(a, b) >= 4 && Math.abs(a - b) >= 2) {
+    match.games[who]++;
+    match.points = [0, 0];
+    match.pointNo = 0;
+    call = `Game ${who ? "opponent" : "you"} · ${match.games[0]}–${match.games[1]}`;
+  } else call = scoreCall();
+  const over = match.games[who] >= GAMES_TO_WIN;
+  events.push({ type: "point", who, reason, call: over ? "" : call });
+  if (over) {
+    game.phase = "over";
+    events.push({ type: "over", won: who === 0 });
+  }
+  match.nextAt = game.clock + 2600;
+  opp.goal = servePos(); opp.moveAt = game.clock + 900;
+}
+
+function fault(reason) {
+  ball.done = true;
+  if (match.serveNo === 2) { pointTo(0, "Double fault"); return; }
+  match.serveNo = 2;
+  match.nextAt = game.clock + 1500;
+  events.push({ type: "fault", reason });
+}
+
+function practiceResult(result) {
+  ball.done = true;
+  if (result === "IN") { game.ins++; game.streak++; game.bestStreak = Math.max(game.bestStreak, game.streak); }
+  else game.streak = 0;
+  game.nextFeedAt = game.clock + 1600;
+  events.push({ type: "result", result, speed: ball.hitSpeed });
+}
+
+// Your shot missed (into the net, out, or into your own court)
+function yourMiss(reason) {
+  if (settings.mode === "match") pointTo(1, reason);
+  else practiceResult(reason === "Net" ? "NET" : reason === "Out" ? "OUT" : "SHORT");
+}
+
+// ---- Your hits ----
+const hittable = () => !ball.done && !ball.toss && ball.by !== "you" && ball.inBounce;
+
+function youHit(racketSpeed) {
+  Object.assign(ball, { by: "you", born: game.clock, g1: G * SPIN_G, serve: false, bounces: 0, inBounce: false, aim: null, contactT: null, swing: null });
+  ball.hitSpeed = Math.hypot(...ball.v);
+  events.push({ type: "hit", who: "you", racketSpeed });
+  if (settings.mode === "match") oppRespond();
+}
+
+// Medium / Hard: continuous collision between the ball and the string bed over one sub-step,
+// the ball going from b0 to b1 while the racket moves from pose A to pose B
+function tryHit(A, B, b0, b1, h) {
+  const dA = dot(sub(b0, A.head), A.n), dB = dot(sub(b1, B.head), B.n);
+  if (dA * dB > 0 && Math.abs(dB) > R_BALL) return false;  // still on the same side, not touching
+  const f = dA === dB ? 1 : clamp(dA / (dA - dB), 0, 1);
+  const pc = mix(b0, b1, f), c = mix(A.head, B.head, f), u = mix(A.u, B.u, f), v = mix(A.v, B.v, f);
+  const along = dot(sub(pc, c), u), across = dot(sub(pc, c), v);
+  if ((along / (HEAD_A * LV.assist)) ** 2 + (across / (HEAD_B * LV.assist)) ** 2 > 1) return false;
+
+  // Racket velocity at the contact spot, and the ball's velocity relative to it
+  const spot = P => add(P.head, add(scale(P.u, along), scale(P.v, across)));
+  const vr = scale(sub(spot(B), spot(A)), 1000 / h);
+  const n = unit(mix(A.n, B.n, f)), side = Math.sign(dA) || 1;
+  const rel = sub(ball.v, vr), vn = dot(rel, n);
+  if (vn * side >= 0) return false;  // moving apart already
+  const relN = scale(n, vn), relT = sub(rel, relN);
+  const out = add(vr, add(scale(relN, -HIT_E), scale(relT, HIT_GRIP)));
+
+  // The level's aim and net-clearance help, for balls hit toward the net
+  if (out[2] < -2 && pc[2] > NET_Z) {
+    const h0 = Math.atan2(out[0], -out[2]), h1 = Math.atan2(AIM_AT[0] - pc[0], pc[2] - AIM_AT[1]);
+    const hs = Math.hypot(out[0], out[2]), hd = h0 + (h1 - h0) * LV.aim;
+    out[0] = hs * Math.sin(hd); out[2] = -hs * Math.cos(hd);
+    if (LV.netClear > 0) {
+      const tn = (pc[2] - NET_Z) / -out[2], g = G * SPIN_G;
+      out[1] = Math.max(out[1], (netHeight(pc[0]) + R_BALL + LV.netClear - pc[1] + g * tn * tn / 2) / tn);
+    }
+  }
+  ball.v = out;
+  ball.p = add(pc, scale(n, side * (R_BALL + 0.005)));
+  youHit(Math.hypot(...vr));
+  return true;
+}
+
+// Easy: a forward swing (racket head moving toward the net) inside the window arms a hit; the
+// ball is returned when it reaches the ring. Early swings pull it cross-court, late ones push
+// it down the line; a faster swing hits deeper and harder.
+function armSwing(A, B, h) {
+  const e = game.clock - ball.contactT;
+  if (e < -LV.window || e > LV.window * 0.6) return;
+  const vh = scale(sub(B.head, A.head), 1000 / h), speed = Math.hypot(...vh);
+  if (speed > 5 && vh[2] < -2) ball.swing = { e, speed };
+}
+
+function timingReturn() {
+  const { e, speed } = ball.swing, side = Math.sign(ball.aim[0]) || 1;
+  const pull = e < 0 ? -e / LV.window : -e / (LV.window * 0.6);  // +1 very early … −1 very late
+  const power = clamp((speed - 5) / 15, 0, 1);
+  const to = [clamp(side * (1.2 - 3.4 * pull), -3.4, 3.4), R_BALL, -16 - 5 * power];
+  ball.v = aimAt(ball.p, to, 11 + 14 * power, G * SPIN_G, 0.3);
+  youHit(speed);
+}
+
+// ---- Ball ----
+function onBounce(p) {
+  ball.bounces++;
+  if (ball.done || ball.toss) return;
+  const inTheirs = p[2] < NET_Z && p[2] > FAR_Z - R_BALL && Math.abs(p[0]) < HALF_SINGLES + R_BALL;
+  const inYours = p[2] > NET_Z && p[2] < R_BALL && Math.abs(p[0]) < HALF_SINGLES + R_BALL;
+  const inBox = p[2] > NET_Z && p[2] < NET_Z + SERVICE + R_BALL && p[0] * ball.box > -R_BALL && p[0] * ball.box < HALF_SINGLES + R_BALL;
+  if (ball.by === "you") {
+    if (ball.bounces === 1) {
+      if (!inTheirs) yourMiss(p[2] > NET_Z ? "Short" : "Out");
+      else { ball.inBounce = true; if (settings.mode === "practice") practiceResult("IN"); }
+    } else if (ball.inBounce && settings.mode === "match") pointTo(0, "Winner!");
+  } else if (ball.bounces === 1) {
+    if (ball.serve ? inBox : inYours) ball.inBounce = true;
+    else if (ball.serve) fault("Out");
+    else if (ball.by === "opp") pointTo(0, "Out");
+    else { ball.done = true; game.nextFeedAt = game.clock + 1000; }
+  } else if (ball.inBounce) missed();
+}
+
+function missed() {
+  if (settings.mode === "match") pointTo(1, ball.serve ? "Ace" : "Missed");
+  else practiceResult("MISS");
+}
+
+function stepBall(A, B, h) {
+  const s = h / 1000, p0 = ball.p, v0 = ball.v, g = ball.bounces ? G : ball.g1;
+  const p1 = [p0[0] + v0[0] * s, p0[1] + v0[1] * s - g * s * s / 2, p0[2] + v0[2] * s];
+  let v1 = [v0[0], v0[1] - g * s, v0[2]];
+
+  if (ball.toss) {
+    ball.p = p1; ball.v = v1;
+    if (game.clock >= opp.anim.tHit) { ball.toss = false; oppShot(ball.p, true); }
+    return;
+  }
+  if (hittable()) {
+    if (LV.timing) {
+      if (ball.contactT !== null && !ball.swing) armSwing(A, B, h);
+      if (ball.swing && game.clock >= ball.contactT) { timingReturn(); return; }
+    } else if (tryHit(A, B, p0, p1, h)) return;
+  }
+  if (ball.by === "you" && opp.plan && game.clock >= opp.plan.tHit && oppContact()) return;
+
+  // Net
+  if ((p0[2] - NET_Z) * (p1[2] - NET_Z) < 0) {
+    const f = (p0[2] - NET_Z) / (p0[2] - p1[2]), x = p0[0] + (p1[0] - p0[0]) * f, y = p0[1] + (p1[1] - p0[1]) * f;
+    if (Math.abs(x) < NET_HALF && y < netHeight(x) + R_BALL) {
+      p1[2] = NET_Z + Math.sign(p0[2] - NET_Z) * R_BALL;
+      v1 = [v1[0] * 0.2, v1[1] * 0.2, -v1[2] * 0.1];
+      if (!ball.done) {
+        if (ball.by === "you") yourMiss("Net");
+        else if (ball.serve) fault("Net");
+        else if (ball.by === "opp") pointTo(0, "Net");
+      }
+    }
+  }
+
+  // Court
+  if (p1[1] < R_BALL && v1[1] < 0) {
+    p1[1] = R_BALL;
+    v1 = [v1[0] * BOUNCE_KEEP, v1[1] < -0.6 ? -v1[1] * BOUNCE_E : 0, v1[2] * BOUNCE_KEEP];
+    if (v1[1] > 0) events.push({ type: "bounce", strength: Math.min(1, v1[1] / 5) });
+    ball.p = p1; ball.v = v1;
+    onBounce(p1);
+    return;
+  }
+  ball.p = p1; ball.v = v1;
+  if (!ball.done && ball.by !== "you" && ball.inBounce && p1[2] > SHOULDER[2] + 1.6) missed();
+  if (!ball.done && ball.by === "you" && ball.inBounce && p1[2] < -29 && settings.mode === "match") pointTo(0, "Winner!");
+}
+
+function feedBall() {
+  const x = Math.random() < 0.6 ? FORE_X : BACK_X, g1 = G * OPP_SPIN;
+  const plan = planTo(MACHINE, [x + rand(-0.08, 0.08), rand(...LV.heights), SHOULDER[2]], LV.shot, g1, NET_Z + 1, -0.8)
+    || errorShot(MACHINE, x, false, LV.shot, g1);
+  incoming(MACHINE, plan, g1, "machine", false, x);
+}
+
+// Advance the game to device time `target`, sub-stepping against the interpolated racket
+function simulate(target) {
+  if (game.simT === null || target - game.simT > 250 || target < game.simT - 1000 || game.paused || game.phase === "menu") {
+    game.simT = target;  // first frame, paused, or back from a stall / hidden tab: skip ahead
+    game.simPose = null;
+    return;
+  }
+  let A = game.simPose || poseAt(game.simT);
+  while (game.simT < target) {
+    const h = Math.min(STEP_MS, target - game.simT), t1 = game.simT + h, B = poseAt(t1);
+    game.clock += h;
+    if (ball) stepBall(A, B, h);
+    stepOpp(h);
+    game.simT = t1; A = B;
+  }
+  game.simPose = A;
+  if (ball && !ball.done && game.clock - ball.born > 8000) {  // shouldn't happen; never stall the game
+    if (settings.mode === "practice") practiceResult("MISS");
+    else if (ball.by === "you") pointTo(0, "Winner!");
+    else missed();
+  }
+  if (game.phase !== "play" || (ball && !ball.done)) return;
+  if (settings.mode === "match") { if (game.clock >= match.nextAt) startServe(); }
+  else if (game.clock >= game.nextFeedAt) feedBall();
+}
+
+// ---- Page glue ----
+function startGame() {
+  LV = LEVELS[settings.level];
+  Object.assign(match, { games: [0, 0], points: [0, 0], serveNo: 1, pointNo: 0, nextAt: game.clock + 1500 });
+  Object.assign(game, { ins: 0, streak: 0, bestStreak: 0, nextFeedAt: game.clock + 1200, phase: "play", paused: false });
+  Object.assign(opp, { x: -1.2, z: OPP_BASE_Z, goal: [-1.2, OPP_BASE_Z], plan: null, anim: null, speed: 0 });
+  ball = null;
+  try { audio = audio || new AudioContext(); audio.resume(); } catch (e) { /* no sound */ }
+  document.getElementById("menu").hidden = true;
+  document.getElementById("over").hidden = true;
+  document.getElementById("hud").hidden = false;
+  document.getElementById("hud-match").hidden = settings.mode !== "match";
+  document.getElementById("hud-practice").hidden = settings.mode !== "practice";
+  document.getElementById("lvl-name").textContent = LV.label + (settings.mode === "practice" ? " practice" : "");
+  document.getElementById("pause").textContent = "Pause";
+  setPhaseUI();
+  updateScore();
+}
+
+// Pause and the M5 hint only apply while playing; Menu once a game has started
+function setPhaseUI() {
+  document.getElementById("pause").hidden = document.getElementById("play-hint").hidden = game.phase !== "play";
+  document.getElementById("menu-btn").hidden = game.phase === "menu";
+}
+
+function showMenu() {
+  game.phase = "menu";
+  ball = null;
+  document.getElementById("over").hidden = true;
+  document.getElementById("hud").hidden = true;
+  document.getElementById("menu").hidden = false;
+  setPhaseUI();
+}
+
+function togglePause() {
+  if (game.phase !== "play") return;
+  game.paused = !game.paused;
+  document.getElementById("pause").textContent = game.paused ? "Resume" : "Pause";
+  if (game.paused) banner("Paused", "#ffffff", "", 100000); else hideBanner();
+}
+
+function onM5() {
+  if (game.phase === "play") togglePause();
+  else startGame();
+}
+
+function renderMenu() {
+  for (const b of document.querySelectorAll("#levels button")) b.classList.toggle("on", b.dataset.level === settings.level);
+  for (const b of document.querySelectorAll("#modes button")) b.classList.toggle("on", b.dataset.mode === settings.mode);
+  document.getElementById("level-desc").textContent = LEVELS[settings.level].desc;
+  document.getElementById("mode-desc").textContent = MODES[settings.mode];
+  try { localStorage.setItem("tennis", JSON.stringify(settings)); } catch (e) { /* not remembered */ }
+}
+
+function updateScore() {
+  const [p0, p1] = pointLabels();
+  document.getElementById("g0").textContent = match.games[0];
+  document.getElementById("g1").textContent = match.games[1];
+  document.getElementById("p0").textContent = p0;
+  document.getElementById("p1").textContent = p1;
+  document.getElementById("s-in").textContent = game.ins;
+  document.getElementById("s-streak").textContent = game.streak;
+  document.getElementById("s-best").textContent = game.bestStreak;
+}
+
+function setStatus(ok, text) {
+  document.getElementById("dot").className = "dot " + (ok ? "ok" : "err");
+  document.getElementById("status").textContent = text;
+}
+
+let audio = null;
+function tone(gain, freq, len) {
+  if (!audio || audio.state !== "running") return;
+  const t = audio.currentTime, o = audio.createOscillator(), g = audio.createGain();
+  o.type = "triangle";
+  o.frequency.setValueAtTime(freq, t);
+  o.frequency.exponentialRampToValueAtTime(freq * 0.5, t + len);
+  g.gain.setValueAtTime(gain, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + len);
+  o.connect(g).connect(audio.destination);
+  o.start(t); o.stop(t + len + 0.01);
+}
+
+let bannerTimer = 0;
+function banner(text, color, small = "", ms = 1300) {
+  const el = document.getElementById("banner");
+  el.textContent = text;
+  if (small) { const s = document.createElement("small"); s.textContent = small; el.appendChild(s); }
+  el.style.color = color;
+  el.classList.add("show");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideBanner, ms);
+}
+const hideBanner = () => document.getElementById("banner").classList.remove("show");
+
+const kmh = v => Math.round(v * 3.6);
+const GOOD = "#7dff8a", BAD = "#ffb3a8";
+const PRACTICE_TEXT = { IN: ["IN!", GOOD], OUT: ["OUT", BAD], NET: ["NET", BAD], SHORT: ["SHORT", BAD], MISS: ["MISSED", "#ffffff"] };
+
+// Hand game events to the page (sounds, banner, numbers)
+function drainEvents() {
+  for (const e of events.splice(0)) {
+    if (e.type === "hit") tone(e.who === "you" ? 0.5 : 0.3, e.who === "you" ? 900 : 760, 0.09);
+    else if (e.type === "bounce") tone(0.18 * e.strength, 420, 0.07);
+    else if (e.type === "swing") {
+      document.getElementById("s-swing").textContent = kmh(e.speed);
+      document.getElementById("s-bestswing").textContent = kmh(game.bestSwing);
+    } else if (e.type === "point") {
+      banner(e.reason, e.who === 0 ? GOOD : BAD, e.call, 2000);
+      updateScore();
+    } else if (e.type === "fault") {
+      banner("Fault", "#ffffff", e.reason === "Net" ? "Into the net · second serve" : "Second serve");
+    } else if (e.type === "over") {
+      setPhaseUI();
+      document.getElementById("over-title").textContent = e.won ? "You win!" : "The opponent wins";
+      document.getElementById("over-sub").textContent =
+        `${LV.label} match, games ${match.games[0]}–${match.games[1]}. Press the M5 button or Play again for another.`;
+      setTimeout(() => { if (game.phase === "over") document.getElementById("over").hidden = false; }, 1800);
+    } else if (e.type === "result") {
+      const [text, color] = PRACTICE_TEXT[e.result];
+      banner(text, color, e.result === "IN" && e.speed ? `${kmh(e.speed)} km/h` : "");
+      updateScore();
+    } else if (e.type === "recenter") {
+      banner("Centered", "#ffffff");
+    }
+  }
+}
+
+const deviceNow = () => performance.now() - LAG_MS - game.offset;
+
+for (const b of document.querySelectorAll("#levels button")) b.onclick = () => { settings.level = b.dataset.level; renderMenu(); };
+for (const b of document.querySelectorAll("#modes button")) b.onclick = () => { settings.mode = b.dataset.mode; renderMenu(); };
+document.getElementById("start").onclick = startGame;
+document.getElementById("again").onclick = startGame;
+document.getElementById("to-menu").onclick = showMenu;
+document.getElementById("menu-btn").onclick = showMenu;
+document.getElementById("recenter").onclick = recenter;
+document.getElementById("pause").onclick = togglePause;
+renderMenu();
+setPhaseUI();
+
+let imu = "";
+setStatus(false, "Connecting…");
+connectStream({
+  open() {
+    orient.reset();
+    game.lastSeq = -1; game.poses.length = 0; game.offset = null; game.simT = null; game.prevHead = null;
+    setStatus(true, "Live");
+  },
+  batch(name, batch) {
+    if (!imu) setStatus(true, `Live · ${name}`);
+    imu = name;
+    onBatch(batch);
+  },
+  closed(retryMs) { setStatus(false, `Disconnected — retrying in ${(retryMs / 1000).toFixed(1)} s`); },
+});
+
+// ---- 3D view ----
+import("https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js").then(buildScene, () => {
+  document.getElementById("menu-err").textContent =
+    "Couldn't load the 3D library. This page needs internet access for three.js.";
+});
+
+function buildScene(THREE) {
+  const V = a => new THREE.Vector3(a[0], a[1], a[2]);
+  const view = document.getElementById("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  view.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xbcd9f0);
+  scene.fog = new THREE.Fog(0xbcd9f0, 35, 90);
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+
+  scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x3d5a40, 1.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  sun.position.set(3, 9, 5);
+  sun.target.position.set(0.2, 0, 0);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  Object.assign(sun.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: 1, far: 25 });
+  scene.add(sun, sun.target);
+
+  // Court: blue hard court inside the doubles lines, green run-off around it, white lines
+  const flat = (w, d, color, x, z, y) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial({ color, roughness: 0.9 }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, y, z);
+    m.receiveShadow = true;
+    scene.add(m);
+    return m;
+  };
+  flat(120, 160, 0x4b8a5e, 0, -12, 0);
+  flat(2 * HALF_DOUBLES + 7, -FAR_Z + 13, 0x3f7f5a, 0, FAR_Z / 2, 0.01);
+  flat(2 * HALF_DOUBLES, -FAR_Z, 0x356fae, 0, FAR_Z / 2, 0.02);
+  const LINE = 0.05, line = (x1, z1, x2, z2) =>
+    flat(Math.abs(x2 - x1) || LINE, Math.abs(z2 - z1) || LINE, 0xffffff, (x1 + x2) / 2, (z1 + z2) / 2, 0.03);
+  line(-HALF_DOUBLES, 0, HALF_DOUBLES, 0); line(-HALF_DOUBLES, FAR_Z, HALF_DOUBLES, FAR_Z);
+  for (const x of [-HALF_DOUBLES, -HALF_SINGLES, HALF_SINGLES, HALF_DOUBLES]) line(x, 0, x, FAR_Z);
+  line(-HALF_SINGLES, NET_Z + SERVICE, HALF_SINGLES, NET_Z + SERVICE);
+  line(-HALF_SINGLES, NET_Z - SERVICE, HALF_SINGLES, NET_Z - SERVICE);
+  line(0, NET_Z + SERVICE, 0, NET_Z - SERVICE);
+  line(0, 0, 0, -0.15); line(0, FAR_Z, 0, FAR_Z + 0.15);
+
+  // Net: see-through mesh with a sagging top, white tape, posts
+  const netTex = (() => {
+    const c = document.createElement("canvas"); c.width = c.height = 32;
+    const g = c.getContext("2d"); g.strokeStyle = "rgba(20,20,20,0.85)"; g.lineWidth = 3;
+    g.strokeRect(0, 0, 32, 32);
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2 * NET_HALF / 0.06, NET_POST_H / 0.06);
+    return t;
+  })();
+  const netGeo = new THREE.PlaneGeometry(2 * NET_HALF, 1, 64, 1), np = netGeo.attributes.position;
+  for (let i = 0; i < np.count; i++) np.setY(i, np.getY(i) > 0 ? netHeight(np.getX(i)) : 0);
+  const net = new THREE.Mesh(netGeo, new THREE.MeshBasicMaterial({ map: netTex, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+  net.position.z = NET_Z;
+  scene.add(net);
+  const tapePts = []; for (let i = 0; i <= 32; i++) { const x = -NET_HALF + 2 * NET_HALF * i / 32; tapePts.push(new THREE.Vector3(x, netHeight(x), NET_Z)); }
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(tapePts), 64, 0.025, 6), new THREE.MeshStandardMaterial({ color: 0xffffff })));
+  for (const x of [-NET_HALF, NET_HALF]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, NET_POST_H + 0.05, 12), new THREE.MeshStandardMaterial({ color: 0x2b3a33 }));
+    post.position.set(x, (NET_POST_H + 0.05) / 2, NET_Z);
+    scene.add(post);
+  }
+
+  // Ball machine (practice)
+  const machine = new THREE.Group();
+  const mBody = new THREE.Mesh(new THREE.BoxGeometry(0.6, MACHINE[1] - 0.12, 0.6), new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.6 }));
+  mBody.position.y = (MACHINE[1] - 0.12) / 2;
+  const mouth = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.25, 16), new THREE.MeshStandardMaterial({ color: 0x15181c }));
+  mouth.rotation.x = Math.PI / 2;
+  mouth.position.y = MACHINE[1];
+  machine.add(mBody, mouth);
+  machine.position.set(MACHINE[0], 0, MACHINE[2] - 0.2);
+  scene.add(machine);
+
+  // A racket in its own coordinates: Y along it (hand at 0), Z = string-face normal
+  function makeRacket(color) {
+    const racket = new THREE.Group();
+    const frameMat = new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.1 });
+    class Rim extends THREE.Curve {
+      getPoint(t, target = new THREE.Vector3()) {
+        const a = t * Math.PI * 2;
+        return target.set(HEAD_B * Math.cos(a), HEAD_Y + HEAD_A * Math.sin(a), 0);
+      }
+    }
+    const rim = new THREE.Mesh(new THREE.TubeGeometry(new Rim(), 96, 0.011, 8, true), frameMat);
+    const throatEnd = sgn => {
+      const a = (sgn > 0 ? -50 : -130) * Math.PI / 180;
+      return new THREE.Vector3(HEAD_B * Math.cos(a), HEAD_Y + HEAD_A * Math.sin(a), 0);
+    };
+    const throat = sgn => new THREE.Mesh(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(
+      new THREE.Vector3(0, 0.19, 0), new THREE.Vector3(sgn * 0.03, 0.27, 0), throatEnd(sgn)), 16, 0.009, 8), frameMat);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.015, 0.1, 10), frameMat);
+    shaft.position.y = 0.15;
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.21, 8), new THREE.MeshStandardMaterial({ color: 0x26282b, roughness: 0.8 }));
+    const butt = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.012, 8), frameMat);
+    butt.position.y = -0.11;
+    const stringPts = [];
+    for (let x = -HEAD_B + 0.012; x < HEAD_B; x += 0.0185) {
+      const dy = HEAD_A * Math.sqrt(1 - (x / HEAD_B) ** 2);
+      stringPts.push(new THREE.Vector3(x, HEAD_Y - dy, 0), new THREE.Vector3(x, HEAD_Y + dy, 0));
+    }
+    for (let y = -HEAD_A + 0.015; y < HEAD_A; y += 0.02) {
+      const dx = HEAD_B * Math.sqrt(1 - (y / HEAD_A) ** 2);
+      stringPts.push(new THREE.Vector3(-dx, HEAD_Y + y, 0), new THREE.Vector3(dx, HEAD_Y + y, 0));
+    }
+    const strings = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(stringPts),
+      new THREE.LineBasicMaterial({ color: 0xf6f3ea, transparent: true, opacity: 0.9 }));
+    const bed = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape().absellipse(0, HEAD_Y, HEAD_B, HEAD_A, 0, Math.PI * 2)),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }));
+    racket.add(rim, throat(1), throat(-1), shaft, grip, butt, strings, bed);
+    racket.traverse(o => { if (o.isMesh && o !== bed) o.castShadow = true; });
+    return racket;
+  }
+
+  // Your racket and arm
+  const racket = makeRacket(0xf47a20);
+  racket.matrixAutoUpdate = false;
+  scene.add(racket);
+  const skin = new THREE.MeshStandardMaterial({ color: 0xd8cbbb, roughness: 0.8 });
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 1, 12), skin);
+  const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 12), skin);
+  const fist = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), skin);
+  shoulder.position.copy(V(SHOULDER));
+  arm.castShadow = fist.castShadow = true;
+  scene.add(arm, shoulder, fist);
+
+  // The opponent: a figure built from simple shapes, facing you (+Z). Their right hand (−X)
+  // holds the racket. Limbs hang from pivot groups so they can swing.
+  const person = (() => {
+    const root = new THREE.Group();
+    const mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.75 });
+    const shirt = mat(0xd9463b), shorts = mat(0x2c3140), shoe = mat(0xf2f2f2);
+    const limb = (x, y, r, len, m) => {
+      const pivot = new THREE.Group();
+      pivot.position.set(x, y, 0);
+      const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 10), m);
+      mesh.position.y = -len / 2;
+      mesh.castShadow = true;
+      pivot.add(mesh);
+      root.add(pivot);
+      return pivot;
+    };
+    const legL = limb(0.1, 0.92, 0.065, 0.78, skin), legR = limb(-0.1, 0.92, 0.065, 0.78, skin);
+    for (const leg of [legL, legR]) {
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.07, 0.22), shoe);
+      foot.position.set(0, -0.86, 0.04);
+      leg.add(foot);
+    }
+    const hips = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.24, 14), shorts);
+    hips.position.y = 0.9;
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.36, 4, 12), shirt);
+    torso.position.y = 1.26;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), skin);
+    head.position.y = 1.72;
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.125, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), shorts);
+    cap.position.y = 1.74;
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.015, 0.12), shorts);
+    visor.position.set(0, 1.76, 0.14);
+    for (const m of [hips, torso, head]) m.castShadow = true;
+    root.add(hips, torso, head, cap, visor);
+    const armR = limb(-0.23, 1.48, 0.045, 0.52, skin), armL = limb(0.23, 1.48, 0.045, 0.52, skin);
+    const theirRacket = makeRacket(0x2a78d6);
+    theirRacket.position.y = -0.62;
+    theirRacket.rotation.x = Math.PI;  // continues down the arm
+    armR.add(theirRacket);
+    scene.add(root);
+    return { root, legL, legR, armR, armL };
+  })();
+  let runPhase = 0;
+
+  // Racket-arm direction (in the opponent's frame) over a stroke; s = seconds from contact
+  const IDLE = [-0.35, -0.8, 0.45], TOSS_DOWN = [0.15, -1, 0.1], TOSS_UP = [0.2, 1, 0.15];
+  const stroke = (sg, th) => [sg * Math.cos(th), -0.2, Math.sin(th)];
+  function strokeKeys(kind) {
+    if (kind === "serve") return [[-0.9, IDLE], [-0.45, [-0.2, 0.5, -0.85]], [0, [-0.05, 1, 0.3]], [0.35, [0.25, -0.6, 0.75]], [0.9, IDLE]];
+    const sg = kind === "fore" ? -1 : 1;
+    return [[-0.9, IDLE], [-0.35, stroke(sg, -1.9)], [-0.15, stroke(sg, -0.9)], [0, stroke(sg, 0)], [0.15, stroke(sg, 0.8)],
+            [0.3, stroke(sg, 1.5)], [0.9, IDLE]];
+  }
+  function keyed(keys, s) {
+    if (s <= keys[0][0] || s >= keys[keys.length - 1][0]) return IDLE;
+    let i = 1;
+    while (keys[i][0] < s) i++;
+    const [s0, a] = keys[i - 1], [s1, b] = keys[i];
+    return mix(unit(a), unit(b), (s - s0) / (s1 - s0));
+  }
+  const DOWN = new THREE.Vector3(0, -1, 0);
+  function poseOpponent(dt) {
+    person.root.visible = settings.mode === "match";
+    const a = opp.anim, s = a ? (game.clock - a.tHit) / 1000 : 99;
+    runPhase += opp.speed * dt * 3.2;
+    const stride = Math.min(1, opp.speed / 3) * 0.6;
+    person.legL.rotation.x = Math.sin(runPhase) * stride;
+    person.legR.rotation.x = -Math.sin(runPhase) * stride;
+    person.root.position.set(opp.x, Math.abs(Math.sin(runPhase)) * 0.04 * Math.min(1, opp.speed / 3), opp.z);
+    person.armR.quaternion.setFromUnitVectors(DOWN, V(unit(a ? keyed(strokeKeys(a.kind), s) : IDLE)));
+    const tossing = a && a.kind === "serve" && s > -0.95 && s < -0.35;
+    person.armL.quaternion.setFromUnitVectors(DOWN, V(unit(tossing ? TOSS_UP : TOSS_DOWN)));
+  }
+
+  // Swoosh behind your racket head while it moves fast
+  const TRAIL = 18, trailPos = new Float32Array(TRAIL * 2 * 3), trailCol = new Float32Array(TRAIL * 2 * 4);
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute("position", new THREE.BufferAttribute(trailPos, 3));
+  trailGeo.setAttribute("color", new THREE.BufferAttribute(trailCol, 4));
+  const idx = [];
+  for (let i = 0; i < TRAIL - 1; i++) { const a = 2 * i; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  trailGeo.setIndex(idx);
+  const trail = new THREE.Mesh(trailGeo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+  trail.frustumCulled = false;
+  scene.add(trail);
+  const trailHist = [];
+
+  // Ball, its blob shadow, the white ring where it will reach your hitting zone, and the
+  // timing ring that shrinks onto it
+  const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(R_BALL, 20, 14), new THREE.MeshStandardMaterial({ color: 0xd9ef3a, roughness: 0.55, emissive: 0x2a3300 }));
+  const blob = new THREE.Mesh(new THREE.CircleGeometry(1, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, depthWrite: false }));
+  blob.rotation.x = -Math.PI / 2;
+  const ringMat = () => new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.24, 40), ringMat());
+  const cue = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.225, 40), ringMat());
+  scene.add(ballMesh, blob, ring, cue);
+
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight, aspect = w / h;
+    renderer.setSize(w, h, false);
+    camera.aspect = aspect;
+    // Narrow (portrait) screens: widen the view so both hitting sides stay in frame
+    camera.fov = aspect < 1 ? 72 : 50;
+    camera.position.set(0.35, 1.85, aspect < 1 ? 3.9 : 3.4);
+    camera.lookAt(0.2, 0.55, -7);
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  let lastFrame = performance.now();
+  function frame() {
+    requestAnimationFrame(frame);
+    const now = performance.now(), dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    drainEvents();
+    if (game.offset !== null && game.poses.length) {
+      const t = deviceNow();
+      simulate(t);
+      drainEvents();
+      const P = game.simPose || poseAt(t), M = P.M, hd = P.hand;
+      racket.matrix.set(M[0][0], M[0][1], M[0][2], hd[0], M[1][0], M[1][1], M[1][2], hd[1], M[2][0], M[2][1], M[2][2], hd[2], 0, 0, 0, 1);
+      racket.matrixWorldNeedsUpdate = true;
+      const armVec = sub(hd, SHOULDER), armLen = Math.hypot(...armVec);
+      arm.position.copy(V(mix(SHOULDER, hd, 0.5)));
+      arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), V(scale(armVec, 1 / armLen)));
+      arm.scale.set(1, armLen, 1);
+      fist.position.copy(V(hd));
+
+      trailHist.unshift({ tip: add(hd, scale(P.u, HEAD_Y + HEAD_A)), low: add(hd, scale(P.u, HEAD_Y - HEAD_A)) });
+      trailHist.length = Math.min(trailHist.length, TRAIL);
+      const speed = trailHist.length > 1 ? Math.hypot(...sub(trailHist[0].tip, trailHist[1].tip)) / Math.max(dt, 0.001) : 0;
+      for (let i = 0; i < TRAIL; i++) {
+        const e = trailHist[Math.min(i, trailHist.length - 1)], alpha = (1 - i / TRAIL) * clamp((speed - 3) / 10, 0, 1) * 0.55;
+        trailPos.set(e.tip, i * 6); trailPos.set(e.low, i * 6 + 3);
+        trailCol.set([1, 0.8, 0.6, alpha, 1, 0.8, 0.6, alpha * 0.3], i * 8);
+      }
+      trailGeo.attributes.position.needsUpdate = trailGeo.attributes.color.needsUpdate = true;
+    }
+    poseOpponent(dt);
+    machine.visible = settings.mode === "practice";
+
+    const show = !!ball && game.phase !== "menu";
+    ballMesh.visible = blob.visible = show;
+    const coming = show && !ball.done && ball.by !== "you" && ball.aim;
+    ring.visible = !!coming;
+    cue.visible = !!coming && LV.cue && ball.contactT !== null;
+    if (show) {
+      ballMesh.position.copy(V(ball.p));
+      blob.position.set(ball.p[0], 0.04, ball.p[2]);
+      blob.scale.setScalar(R_BALL * (1.2 + ball.p[1] * 0.4));
+      blob.material.opacity = 0.35 * Math.max(0.15, 1 - ball.p[1] / 3);
+    }
+    if (coming) {
+      ring.position.set(...ball.aim);
+      const left = ball.contactT - game.clock;  // ms until the ball reaches the ring
+      cue.position.set(...ball.aim);
+      cue.scale.setScalar(1 + clamp(left / 1000, 0, 1.2) * 2.5);
+      const now2 = LV.timing ? Math.abs(left) <= LV.window * 0.5 : Math.abs(left) < 60;
+      cue.material.color.set(now2 || ball.swing ? 0x7dff8a : 0xffffff);
+      cue.material.opacity = clamp(1.2 - left / 1500, 0.15, 0.85);
+    }
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>
+)HTML";
