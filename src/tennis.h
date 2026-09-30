@@ -124,6 +124,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   <div class="label">Mode</div>
   <div class="seg" id="modes"><button data-mode="match">Match</button><button data-mode="practice">Practice</button></div>
   <div class="desc" id="mode-desc"></div>
+  <div class="label">Racket hand</div>
+  <div class="seg" id="hands"><button data-hand="1">Right</button><button data-hand="-1">Left</button></div>
   <div class="err" id="menu-err"></div>
   <div class="actions"><button class="primary" id="start">Start</button><span class="hint">or press the M5 button</span></div>
 </div>
@@ -135,6 +137,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 </div>
 
 <script src="/motion.js"></script>
+<script src="/controller.js"></script>
 <script>
 // ---- Game model (plain JS, three.js coordinates) ----
 // Three.js space: X right, Y up, Z toward the viewer. You stand just behind the near baseline
@@ -148,9 +151,17 @@ const BOUNCE_E = 0.75, BOUNCE_KEEP = 0.9;  // court: vertical rebound, share of 
 // Racket and arm model. The stick only knows its orientation, so the racket's position is
 // modelled: the hand sits at the end of an arm hanging from the shoulder, pointing roughly the
 // way the racket points (drooping a little), like 3-DOF VR controllers do.
-const SHOULDER = [0.2, 1.35, 0.6], ARM = 0.6, DROOP = 0.5;
+const ARM = 0.6, DROOP = 0.5;
 const HEAD_Y = 0.46, HEAD_A = 0.17, HEAD_B = 0.13;  // string bed centre (from the hand), half length, half width
-const FORE_X = 1.15, BACK_X = -0.8;  // where your racket head reaches on the forehand / backhand side
+// Right-handed, the shoulder is right of centre and the forehand on the right; left-handed
+// mirrors both. FORE_X / BACK_X: where your racket head reaches on each side.
+let SHOULDER, FORE_X, BACK_X;
+function applyHand() {
+  SHOULDER = [0.2 * ctl.hand, 1.35, 0.6];
+  FORE_X = 1.15 * ctl.hand;
+  BACK_X = -0.8 * ctl.hand;
+}
+applyHand();
 
 // Hitting physics. HIT_E: how much of the ball's own speed (relative to the racket) comes back
 // off the strings; HIT_GRIP: share of sliding speed across the strings kept. Hit balls fall
@@ -192,17 +203,8 @@ const GAMES_TO_WIN = 3;
 const OPP_BASE_Z = -24.3;     // where the opponent waits, just behind their baseline
 const MACHINE = [0, 1.0, -22];
 
-const LAG_MS = 30;   // render this far behind the newest sample, so there's data on both sides
 const STEP_MS = 2;   // physics sub-step: a fast racket head moves ~4 cm per step
 
-const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const unit = a => scale(a, 1 / Math.hypot(...a));
-const mix = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const rand = (lo, hi) => lo + Math.random() * (hi - lo);
 const netHeight = x => NET_CENTER_H + (NET_POST_H - NET_CENTER_H) * Math.min(1, Math.abs(x) / NET_HALF);
 
 const settings = { level: "easy", mode: "match" };
@@ -212,15 +214,10 @@ if (!MODES[settings.mode]) settings.mode = "match";
 let LV = LEVELS[settings.level];
 
 const game = {
-  yaw0: 0,                 // heading that counts as "toward the net" (world frame, radians)
-  lastSeq: -1, btn: 0,
-  poses: [],               // recent {t (device ms), q} from the orientation filter
-  offset: null,            // local ms − device ms, from the fastest-arriving samples
   simT: null, simPose: null,
   clock: 0,                // game time (ms): runs with the simulation, stops while paused
   phase: "menu",           // "menu" | "play" | "over"
   paused: false,
-  swing: { active: false, peak: 0 }, prevHead: null, bestSwing: 0,
   ins: 0, streak: 0, bestStreak: 0, nextFeedAt: 0,  // practice
 };
 const match = { games: [0, 0], points: [0, 0], serveNo: 1, pointNo: 0, nextAt: 0 };  // [you, opponent]
@@ -236,94 +233,36 @@ const events = [];         // for the page: sounds, banners, numbers
 // Stick orientation → racket pose in three.js space. M maps racket (= stick body) axes into
 // the scene: body Y runs along the racket toward the head, body Z is the string-face normal.
 function racketPose(q) {
-  const R = rotationMatrix(q);
-  const c = Math.cos(-game.yaw0), s = Math.sin(-game.yaw0);
-  const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  for (let col = 0; col < 3; col++) {
-    const wx = R[0][col], wy = R[1][col], wz = R[2][col];
-    const hx = c * wx - s * wy, hy = s * wx + c * wy;  // turn so the recentered heading is +Y
-    M[0][col] = hx; M[1][col] = wz; M[2][col] = -hy;    // world (Z up, Y ahead) → three (Y up, −Z ahead)
-  }
-  const u = [M[0][1], M[1][1], M[2][1]], v = [M[0][0], M[1][0], M[2][0]], n = [M[0][2], M[1][2], M[2][2]];
+  const M = stickMatrix(q), u = column(M, 1), v = column(M, 0), n = column(M, 2);
   const hand = add(SHOULDER, scale(unit(add(u, [0, -DROOP, 0])), ARM));
   return { M, u, v, n, hand, head: add(hand, scale(u, HEAD_Y)) };
 }
 
-function nlerp(a, b, f) {
-  const sgn = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0 ? -1 : 1;
-  const q = a.map((v, i) => v + (sgn * b[i] - v) * f), n = Math.hypot(...q);
-  return q.map(v => v / n);
-}
-
-function quatAt(t) {
-  const p = game.poses, n = p.length;
-  if (t >= p[n - 1].t) return p[n - 1].q;
-  let j = n - 1;
-  while (j > 0 && p[j - 1].t > t) j--;
-  if (j === 0) return p[0].q;
-  return nlerp(p[j - 1].q, p[j].q, (t - p[j - 1].t) / (p[j].t - p[j - 1].t));
-}
-
 const poseAt = t => racketPose(quatAt(t));
 
-// Line the racket up with the net: whatever way the stick points now becomes straight ahead.
+// Line the racket up with the net: whatever way the stick points now becomes straight ahead
 function recenter() {
-  if (!orient.q) return;
-  const R = rotationMatrix(orient.q);
-  game.yaw0 = Math.atan2(-R[0][1], R[1][1]);
-  game.simPose = null;  // the racket jumps; don't let that count as a swing
-  game.prevHead = null;
-  events.push({ type: "recenter" });
+  const ok = recenterHeading();
+  if (ok) game.simPose = null;  // the racket jumps; don't let that count as a hit
+  events.push({ type: "recenter", ok });
 }
 
-function onBatch(batch) {
-  // A big batch is history (on connect) or a backlog after a stall: feed the filter, but
-  // don't act on its buttons or swings
-  const replay = batch.length > 8;
-  const newest = batch[batch.length - 1];
-  const arrive = performance.now() - newest.t;
-  game.offset = game.offset === null || arrive < game.offset ? arrive : game.offset + (arrive - game.offset) * 0.002;
-
-  for (const s of batch) {
-    if (s.seq <= game.lastSeq) continue;  // history can overlap the live stream
-    game.lastSeq = s.seq;
-    const dt = updateOrientation(s);
-    game.poses.push({ t: s.t, q: [...orient.q] });
-
-    const pressed = s.b & ~game.btn;
-    game.btn = s.b;
-    if (replay || !dt) continue;
-    if (pressed & 2) recenter();
-    if (pressed & 1) onM5();
-
-    // Swing speed: how fast the modelled racket head moves
-    const head = racketPose(orient.q).head;
-    if (game.prevHead) {
-      const speed = Math.hypot(...sub(head, game.prevHead)) / dt, sw = game.swing;
-      if (speed > 4) { sw.active = true; sw.peak = Math.max(sw.peak, speed); }
-      else if (sw.active && speed < 2) {
-        sw.active = false;
-        game.bestSwing = Math.max(game.bestSwing, sw.peak);
-        events.push({ type: "swing", speed: sw.peak });
-        sw.peak = 0;
-      }
-    }
-    game.prevHead = head;
-  }
-  while (game.poses.length > 2 && game.poses[0].t < newest.t - 2000) game.poses.shift();
-}
+ctl.swingPoint = q => racketPose(q).head;
+ctl.onSwing = speed => events.push({ type: "swing", speed });
+ctl.onPress = bit => bit === 2 ? recenter() : onM5();
 
 // ---- Shot planning ----
-// A shot from p0 toward you that bounces once (bounce z within [zMin, zMax]) and then passes
-// your hitting zone at x = aim[0], z = aim[2], as close to height aim[1] as the speed allows.
-// Scans where it bounces; returns the velocity, the actual contact point, and flight time.
-function planShot(p0, aim, V1, g1, zMin, zMax) {
+// A shot from p0 toward you that bounces once (bounce z within [zMin, zMax]; for a serve also
+// at least 20 cm inside the service box on side `box`) and then passes your hitting zone at
+// x = aim[0], z = aim[2], as close to height aim[1] as the speed allows. Scans where it
+// bounces; returns the velocity, the actual contact point, and flight time.
+function planShot(p0, aim, V1, g1, zMin, zMax, box = 0) {
   const dx = aim[0] - p0[0], dz = aim[2] - p0[2], D = Math.hypot(dx, dz), ux = dx / D, uz = dz / D;
   const V2 = V1 * BOUNCE_KEEP, dNet = (NET_Z - p0[2]) / uz;  // path distance to the net
   let best = null;
   for (let d2 = 0.5; d2 < D - dNet; d2 += 0.1) {
-    const zb = aim[2] - uz * d2;
-    if (zb < zMin || zb > zMax) continue;
+    const zb = aim[2] - uz * d2, xb = (aim[0] - ux * d2) * box;
+    if (zb < zMin || zb > zMax || (box && (xb < 0.2 || xb > HALF_SINGLES - 0.2))) continue;
     const T1 = (D - d2) / V1, T2 = d2 / V2;
     const vy0 = (R_BALL - p0[1] + g1 * T1 * T1 / 2) / T1;
     const va = -BOUNCE_E * (vy0 - g1 * T1);
@@ -337,9 +276,9 @@ function planShot(p0, aim, V1, g1, zMin, zMax) {
 }
 
 // planShot at the wanted speed, or the nearest speed that works
-function planTo(p0, aim, V1, g1, zMin, zMax) {
+function planTo(p0, aim, V1, g1, zMin, zMax, box = 0) {
   for (const k of [1, 0.9, 1.1, 0.8, 1.2, 0.7, 1.35, 0.6]) {
-    const plan = planShot(p0, aim, V1 * k, g1, zMin, zMax);
+    const plan = planShot(p0, aim, V1 * k, g1, zMin, zMax, box);
     if (plan) return plan;
   }
   return null;
@@ -373,16 +312,18 @@ function incoming(p0, plan, g1, by, serve, targetX) {
 }
 
 // ---- Opponent ----
-const servePos = () => [match.pointNo % 2 === 0 ? -1.2 : 1.2, OPP_BASE_Z];
+// Serving from near the centre mark, so the diagonal path to you lands well inside the box
+const servePos = () => [match.pointNo % 2 === 0 ? -0.45 : 0.45, OPP_BASE_Z];
 
 function oppShot(p0, serve) {
-  // Serves go diagonally: from their right (deuce court) to your forehand, from their left to your backhand
-  const fore = serve ? match.pointNo % 2 === 0 : Math.random() < 0.6;
-  const x = (fore ? FORE_X : BACK_X) + rand(-0.08, 0.08);
+  // Serves go diagonally: from their right (deuce court) into your right-hand box, from their
+  // left into your left-hand box — your forehand or backhand, depending on your hand
+  const right = Math.max(FORE_X, BACK_X), left = Math.min(FORE_X, BACK_X);
+  const x = (serve ? (match.pointNo % 2 === 0 ? right : left) : Math.random() < 0.6 ? FORE_X : BACK_X) + rand(-0.08, 0.08);
   const V = serve ? LV.serve : LV.shot * rand(0.92, 1.08), g1 = G * OPP_SPIN;
   const miss = Math.random() < (serve ? LV.fault : LV.oppErr);
   const plan = (!miss && planTo(p0, [x, rand(...LV.heights), SHOULDER[2]], V, g1,
-    serve ? NET_Z + 0.3 : NET_Z + 1, serve ? NET_Z + SERVICE - 0.3 : -0.8)) || errorShot(p0, x, serve, V, g1);
+    serve ? NET_Z + 0.3 : NET_Z + 1, serve ? NET_Z + SERVICE - 0.3 : -0.8, serve ? Math.sign(x) : 0)) || errorShot(p0, x, serve, V, g1);
   incoming(p0, plan, g1, "opp", serve, x);
   events.push({ type: "hit", who: "opp" });
 }
@@ -721,6 +662,7 @@ function onM5() {
 function renderMenu() {
   for (const b of document.querySelectorAll("#levels button")) b.classList.toggle("on", b.dataset.level === settings.level);
   for (const b of document.querySelectorAll("#modes button")) b.classList.toggle("on", b.dataset.mode === settings.mode);
+  for (const b of document.querySelectorAll("#hands button")) b.classList.toggle("on", +b.dataset.hand === ctl.hand);
   document.getElementById("level-desc").textContent = LEVELS[settings.level].desc;
   document.getElementById("mode-desc").textContent = MODES[settings.mode];
   try { localStorage.setItem("tennis", JSON.stringify(settings)); } catch (e) { /* not remembered */ }
@@ -778,7 +720,7 @@ function drainEvents() {
     else if (e.type === "bounce") tone(0.18 * e.strength, 420, 0.07);
     else if (e.type === "swing") {
       document.getElementById("s-swing").textContent = kmh(e.speed);
-      document.getElementById("s-bestswing").textContent = kmh(game.bestSwing);
+      document.getElementById("s-bestswing").textContent = kmh(ctl.bestSwing);
     } else if (e.type === "point") {
       banner(e.reason, e.who === 0 ? GOOD : BAD, e.call, 2000);
       updateScore();
@@ -795,15 +737,16 @@ function drainEvents() {
       banner(text, color, e.result === "IN" && e.speed ? `${kmh(e.speed)} km/h` : "");
       updateScore();
     } else if (e.type === "recenter") {
-      banner("Centered", "#ffffff");
+      banner(e.ok ? "Centered" : "Point at the screen", "#ffffff", e.ok ? "" : "then press the side button again");
     }
   }
 }
 
-const deviceNow = () => performance.now() - LAG_MS - game.offset;
 
 for (const b of document.querySelectorAll("#levels button")) b.onclick = () => { settings.level = b.dataset.level; renderMenu(); };
 for (const b of document.querySelectorAll("#modes button")) b.onclick = () => { settings.mode = b.dataset.mode; renderMenu(); };
+for (const b of document.querySelectorAll("#hands button")) b.onclick = () => { setHand(+b.dataset.hand); applyHand(); onHandChange(); renderMenu(); };
+let onHandChange = () => {};  // the 3D view moves your arm and the camera
 document.getElementById("start").onclick = startGame;
 document.getElementById("again").onclick = startGame;
 document.getElementById("to-menu").onclick = showMenu;
@@ -817,14 +760,14 @@ let imu = "";
 setStatus(false, "Connecting…");
 connectStream({
   open() {
-    orient.reset();
-    game.lastSeq = -1; game.poses.length = 0; game.offset = null; game.simT = null; game.prevHead = null;
+    resetStream();
+    game.simT = null;
     setStatus(true, "Live");
   },
   batch(name, batch) {
     if (!imu) setStatus(true, `Live · ${name}`);
     imu = name;
-    onBatch(batch);
+    feedBatch(batch);
   },
   closed(retryMs) { setStatus(false, `Disconnected — retrying in ${(retryMs / 1000).toFixed(1)} s`); },
 });
@@ -959,7 +902,6 @@ function buildScene(THREE) {
   const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 1, 12), skin);
   const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 12), skin);
   const fist = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), skin);
-  shoulder.position.copy(V(SHOULDER));
   arm.castShadow = fist.castShadow = true;
   scene.add(arm, shoulder, fist);
 
@@ -1066,12 +1008,17 @@ function buildScene(THREE) {
     camera.aspect = aspect;
     // Narrow (portrait) screens: widen the view so both hitting sides stay in frame
     camera.fov = aspect < 1 ? 72 : 50;
-    camera.position.set(0.35, 1.85, aspect < 1 ? 3.9 : 3.4);
-    camera.lookAt(0.2, 0.55, -7);
+    camera.position.set(0.35 * ctl.hand, 1.85, aspect < 1 ? 3.9 : 3.4);
+    camera.lookAt(0.2 * ctl.hand, 0.55, -7);
     camera.updateProjectionMatrix();
   }
   window.addEventListener("resize", resize);
-  resize();
+  onHandChange = () => {
+    shoulder.position.copy(V(SHOULDER));
+    sun.target.position.set(0.2 * ctl.hand, 0, 0);
+    resize();
+  };
+  onHandChange();
 
   let lastFrame = performance.now();
   function frame() {
@@ -1079,7 +1026,7 @@ function buildScene(THREE) {
     const now = performance.now(), dt = Math.min(0.1, (now - lastFrame) / 1000);
     lastFrame = now;
     drainEvents();
-    if (game.offset !== null && game.poses.length) {
+    if (streamReady()) {
       const t = deviceNow();
       simulate(t);
       drainEvents();

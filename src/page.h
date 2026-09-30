@@ -32,7 +32,8 @@ h1 { font-size: 20px; margin: 0; }
 .status { color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .dot.ok { background: var(--good); } .dot.err { background: var(--bad); }
-.navlink { margin-left: auto; color: var(--x); text-decoration: none; font-weight: 600; }
+.navlink { color: var(--x); text-decoration: none; font-weight: 600; }
+.navlink:first-of-type { margin-left: auto; }
 header button { font: inherit; padding: 6px 14px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
@@ -119,6 +120,8 @@ footer { color: var(--muted); font-size: 12px; }
     <h1>M5StickC motion</h1>
     <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
     <a class="navlink" href="/tennis">Tennis game →</a>
+    <a class="navlink" href="/saber">Saber game →</a>
+    <a class="navlink" href="/skate">Skate game →</a>
     <button id="pause">Pause</button>
   </header>
 

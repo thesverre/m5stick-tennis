@@ -1,0 +1,834 @@
+#pragma once
+
+// Downhill skateboard game served at "/skate". The stick is the board: hold it flat, tilt to
+// lean and carve around obstacles, nose down to tuck, nose up to brake, flick the nose up to
+// ollie. An endless winding road that gets faster the further you get.
+static const char SKATE_HTML[] PROGMEM = R"HTML(<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M5StickC Skate</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: rgba(252,252,251,0.9); --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --border: rgba(11,11,11,0.10); --accent: #2a78d6; --good: #0ca30c; --bad: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: rgba(26,26,25,0.86); --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+    --border: rgba(255,255,255,0.10); --accent: #3987e5;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: #a9d3f2; color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#view { position: fixed; inset: 0; }
+#view canvas { display: block; width: 100%; height: 100%; }
+.panel { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 14px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+#brand { top: 12px; left: 12px; display: flex; flex-direction: column; gap: 2px; }
+#brand h1 { font-size: 17px; margin: 0; }
+#brand a { color: var(--accent); text-decoration: none; font-size: 13px; }
+.status { color: var(--ink-2); display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--good); } .dot.err { background: var(--bad); }
+#hud { top: 12px; right: 12px; }
+.tiles { display: grid; grid-auto-flow: column; gap: 4px 18px; }
+.stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.stat .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 12px; font-weight: 400; color: var(--muted); }
+#lives span { color: var(--bad); letter-spacing: 2px; }
+#lives span.lost { color: var(--muted); opacity: .35; }
+#controls { bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px;
+  max-width: calc(100% - 24px); }
+.hint { color: var(--ink-2); font-size: 12px; }
+button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#banner { position: fixed; top: 28%; left: 50%; transform: translate(-50%, -50%) scale(.9); pointer-events: none;
+  font: 800 52px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 3px 16px rgba(0,0,0,.4);
+  opacity: 0; transition: opacity .25s, transform .25s; text-align: center; white-space: nowrap; }
+#banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+#banner small { display: block; font-size: 20px; font-weight: 600; margin-top: 8px; }
+#tilt { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); width: 180px; height: 8px; border-radius: 4px;
+  background: rgba(0,0,0,.25); }
+#tilt i { position: absolute; top: -3px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.4); left: 50%; }
+.dialog { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100% - 32px)); padding: 18px 20px;
+  max-height: calc(100% - 32px); overflow: auto; }
+.dialog h2 { margin: 0 0 8px; font-size: 20px; }
+.dialog ol { margin: 0 0 12px; padding-left: 20px; color: var(--ink-2); }
+.dialog li { margin-bottom: 4px; }
+.label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-top: 10px; }
+.seg { display: flex; gap: 6px; margin: 4px 0; }
+.seg button { flex: 1; }
+.seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.desc { color: var(--ink-2); font-size: 12px; min-height: 2.9em; }
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.err { color: var(--bad); }
+@media (max-width: 720px) {
+  #hud { top: auto; bottom: 70px; left: 12px; right: 12px; }
+  #tilt { bottom: 150px; }
+  #controls .hint { display: none; }
+  #banner { font-size: 38px; }
+}
+</style>
+</head>
+<body>
+<div id="view"></div>
+
+<div class="panel" id="brand">
+  <h1>M5StickC Skate</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+  <a href="/">← Motion page</a>
+</div>
+
+<div class="panel" id="hud" hidden>
+  <div class="tiles">
+    <div class="stat"><div class="k">Lives</div><div class="v" id="lives"></div></div>
+    <div class="stat"><div class="k">Score</div><div class="v" id="s-score">0</div></div>
+    <div class="stat"><div class="k">Distance</div><div class="v"><span id="s-dist">0</span> <small>m</small></div></div>
+    <div class="stat"><div class="k">Speed</div><div class="v"><span id="s-speed">0</span> <small>km/h</small></div></div>
+    <div class="stat"><div class="k">Best</div><div class="v" id="s-best">0</div></div>
+  </div>
+</div>
+<div id="tilt" hidden><i id="tilt-dot"></i></div>
+
+<div class="panel" id="controls">
+  <span class="hint" id="play-hint">Side button: set level · M5 button: jump</span>
+  <button id="level-btn">Set level</button>
+  <button id="pause">Pause</button>
+  <button id="menu-btn">Menu</button>
+</div>
+
+<div id="banner"></div>
+
+<div class="panel dialog" id="menu">
+  <h2>Drop in</h2>
+  <ol>
+    <li>Hold the stick flat like a fingerboard: screen up, top end pointing at your screen.
+      Press the <b>side button</b> while holding it level.</li>
+    <li>Tilt it left or right to lean and carve. Nose down to tuck and go faster, nose up to brake.</li>
+    <li>Flick the nose up quickly to ollie over logs, cones and rocks (the M5 button jumps too).
+      Steer around barriers and cars, and hit ramps for big air.</li>
+  </ol>
+  <div class="label">Level</div>
+  <div class="seg" id="levels">
+    <button data-level="easy">Easy</button><button data-level="medium">Medium</button><button data-level="hard">Hard</button>
+  </div>
+  <div class="desc" id="level-desc"></div>
+  <div class="err" id="menu-err"></div>
+  <div class="actions"><button class="primary" id="start">Start</button><span class="hint">or press the M5 button (click Start once to get sound)</span></div>
+</div>
+
+<div class="panel dialog" id="over" hidden>
+  <h2>Wipeout!</h2>
+  <div class="desc" id="over-sub"></div>
+  <div class="actions"><button class="primary" id="again">Ride again</button><button id="to-menu">Menu</button></div>
+</div>
+
+<script src="/motion.js"></script>
+<script src="/controller.js"></script>
+<script>
+// ---- Game model (plain JS, three.js coordinates) ----
+// The road runs downhill into the screen: distance s along it maps to z = −s. Its centre line
+// winds left and right (roadX) and it drops as it goes (roadY). You ride at distance game.s,
+// game.x metres right of the centre line, game.h above the road. Lengths in m, speeds in m/s.
+const HALF_W = 4, EDGE = 6.3;       // road half width; the grass shoulder ends here
+const R_RIDER = 0.25, STEP_MS = 4;
+const roadX = s => 18 * Math.sin(s / 140) + 6 * Math.sin(s / 67 + 1.3);
+const roadDX = s => 18 / 140 * Math.cos(s / 140) + 6 / 67 * Math.cos(s / 67 + 1.3);
+const roadCurve = s => -18 / 19600 * Math.sin(s / 140) - 6 / 4489 * Math.sin(s / 67 + 1.3);
+const roadY = s => -0.07 * s + 1.2 * Math.sin(s / 45) + 0.5 * Math.sin(s / 19 + 0.7);
+const at = (s, x, h = 0) => [roadX(s) + x, roadY(s) + h, -s];
+
+// Control: lean and nose angle (degrees, relative to the level you set) from the stick's tilt.
+// Tilt comes from gravity, so it never drifts.
+const LEAN_FULL = 22, TUCK_FULL = 15, BRAKE_FROM = 6, BRAKE_FULL = 20;
+const STEER = 0.4;                  // full lean moves you sideways at this share of your speed
+const OLLIE_DPS = 220;              // nose-up flick rate that pops an ollie
+const OLLIE_V = 3.6, G = 9.81;      // take-off speed: ~0.66 m of height, ~0.7 s in the air
+
+// Obstacles: size across (w), along the road (d) and height (h). You can ollie over anything
+// lower than your jump; barriers and cars you have to steer around.
+const TYPES = {
+  cone: { w: 0.5, d: 0.5, h: 0.55 }, rock: { w: 1.0, d: 0.9, h: 0.5 }, barrier: { w: 3.4, d: 0.4, h: 1.0 },
+  log: { w: 2 * EDGE, d: 0.5, h: 0.4 }, car: { w: 1.9, d: 4.2, h: 1.45 }, ramp: { w: 2.4, d: 2.6, h: 0 },
+};
+
+// Levels: base/max speed, time between obstacle rows (so faster riding doesn't mean less time
+// to react), lives, whether cars roll down the road, and what a tilted landing does ("ok",
+// "wobble" slows you down, "fall" crashes).
+const LEVELS = {
+  easy: {
+    label: "Easy", desc: "Cruising speed, plenty of room between obstacles, 3 lives. Landings always stick.",
+    base: 8, max: 14, gap: 2.0, lives: 3, rolling: false, landing: "ok",
+  },
+  medium: {
+    label: "Medium", desc: "Faster, busier, and cars rolling down the hill with you. 2 lives; a tilted landing makes you wobble.",
+    base: 11, max: 19, gap: 1.4, lives: 2, rolling: true, landing: "wobble",
+  },
+  hard: {
+    label: "Hard", desc: "Very fast and packed with obstacles. One hit ends the run, and so does landing tilted.",
+    base: 14, max: 24, gap: 1.0, lives: 1, rolling: true, landing: "fall",
+  },
+};
+
+const settings = { level: "easy" };
+try { Object.assign(settings, JSON.parse(localStorage.getItem("skate") || "{}")); } catch (e) { /* defaults */ }
+if (!LEVELS[settings.level]) settings.level = "easy";
+let LV = LEVELS[settings.level];
+let best = {};
+try { best = JSON.parse(localStorage.getItem("skate-best") || "{}"); } catch (e) { /* none yet */ }
+
+const game = {
+  simT: null, clock: 0, phase: "menu", paused: false,
+  s: 0, x: 0, h: 0, vh: 0, v: 0, air: false,
+  lean: 0, pitch: 0, steer: 0, tuck: 0, brake: 0,
+  level0: { lean: 0, pitch: 0 },   // stick angles that count as flat
+  lives: 3, coins: 0, bonus: 0, crashUntil: 0, safeUntil: 0, wobbleUntil: 0, lastOllie: -1e9,
+  nextRowS: 0, ollies: [],          // device times of nose flicks (and M5 presses) to act on
+};
+const obstacles = [];   // {type, s, x, w, d, h, vs (rolling speed), hit}
+const coins = [];       // {s, x, y, got}
+const events = [];
+
+// Stick → lean and nose angles (degrees). "Up" in stick coordinates is the bottom row of its
+// rotation; leaning right drops the stick's right edge (its +X), nose up raises its top (+Y).
+function tiltOf(q) {
+  const up = rotationMatrix(q)[2], k = 180 / Math.PI;
+  return { lean: Math.atan2(-up[0], up[2]) * k, pitch: Math.atan2(up[1], up[2]) * k };
+}
+
+function setLevel() {
+  if (!orient.q) return;
+  const t = tiltOf(orient.q);
+  game.level0 = { lean: t.lean, pitch: t.pitch };
+  events.push({ type: "level" });
+}
+
+ctl.onPress = bit => bit === 2 ? setLevel() : onM5();
+ctl.onSample = (s, dt) => {
+  if (dt && orient.w[0] > OLLIE_DPS) game.ollies.push(s.t);  // body X rate: nose up is positive
+};
+
+// ---- Road contents ----
+// A car rolling down the hill can catch up with a row placed further down. Predict which lane
+// (−1 left, 1 right, 0 none) a rolling car will be in near distance s when you get there, so
+// the row leaves its gap on the other side and the road is never blocked end to end.
+function laneTaken(s) {
+  const arrive = (s - game.s) / Math.max(game.v, cruise(game.s));
+  for (const o of obstacles) if (o.vs && Math.abs(o.s + o.vs * arrive - s) < 14) return Math.sign(o.x);
+  return 0;
+}
+
+function spawnRow(s) {
+  const lane = laneTaken(s);
+  // Rows that block one side put the block on the rolling car's side, leaving the other free
+  const r = Math.random(), side = lane || (Math.random() < 0.5 ? -1 : 1), put = (type, x, extra = {}) =>
+    obstacles.push({ type, s, x, ...TYPES[type], vs: 0, hit: false, ...extra });
+  const coinLine = (x, n, y = 0.7) => { for (let i = 0; i < n; i++) coins.push({ s: s + 3 + i * 1.5, x, y, got: false }); };
+  if (r < 0.2) {                      // a few cones, leaving a clear lane
+    const gapX = lane ? -lane * rand(1, 2.5) : rand(-2.5, 2.5);
+    for (let x = -HALF_W + 0.6; x < HALF_W; x += rand(1.2, 2.2)) if (Math.abs(x - gapX) > 1.4) put("cone", x);
+  } else if (r < 0.34) {              // rocks (on the rolling car's side, if there is one)
+    const rx = () => lane ? lane * rand(0.5, 3) : rand(-3, 3);
+    put("rock", rx());
+    if (Math.random() < 0.5) put("rock", rx(), { s: s + rand(3, 6) });
+  } else if (r < 0.5) {               // barrier from one side, coins through the gap
+    const w = rand(3.2, 4.6);
+    put("barrier", side * (HALF_W - w / 2), { w });
+    coinLine(-side * (HALF_W - (2 * HALF_W - w) / 2), 3);
+  } else if (r < 0.62) {              // a log across the whole road: jump it
+    put("log", 0);
+  } else if (r < 0.76) {              // a parked car
+    put("car", side * rand(1.2, 2.4));
+  } else if (r < 0.86 && LV.rolling && !lane) {  // a car rolling down the hill, slower than you
+    put("car", side * 2, { vs: rand(4, 7), s: s + 10 });
+  } else if (r < 0.94) {              // a ramp with coins in the air beyond it
+    const x = lane ? -lane * rand(1, 2) : rand(-2, 2);
+    put("ramp", x);
+    for (let i = 0; i < 5; i++) coins.push({ s: s + 5 + i * 2, x, y: 1.4 + Math.sin((i + 1) / 6 * Math.PI) * 1.2, got: false });
+  } else coinLine(lane ? -lane * rand(1, 3) : rand(-3, 3), 6);
+}
+
+const cruise = s => Math.min(LV.max, LV.base + s / 150);  // riding speed you build up to by distance s
+
+function fillRoad() {
+  while (game.nextRowS < game.s + 140) {
+    spawnRow(game.nextRowS);
+    const busy = Math.max(0.75, 1 - game.nextRowS / 5000);  // rows come a little closer the further you go
+    game.nextRowS += LV.gap * busy * cruise(game.nextRowS) * rand(0.85, 1.2);
+  }
+  for (let i = obstacles.length - 1; i >= 0; i--) if (obstacles[i].s < game.s - 15) obstacles.splice(i, 1);
+  for (let i = coins.length - 1; i >= 0; i--) if (coins[i].s < game.s - 15 || coins[i].got) coins.splice(i, 1);
+}
+
+// ---- Riding ----
+function crash() {
+  game.lives--;
+  game.crashUntil = game.clock + 1400;
+  game.v = 0; game.h = 0; game.vh = 0; game.air = false;
+  events.push({ type: "crash" });
+  if (game.lives <= 0) {
+    game.phase = "over";
+    const score = runScore(), isBest = score > (best[settings.level] || 0);
+    if (isBest) { best[settings.level] = score; try { localStorage.setItem("skate-best", JSON.stringify(best)); } catch (e) { /* not saved */ } }
+    events.push({ type: "over", isBest, score });
+  }
+}
+const runScore = () => Math.floor(game.s) + 10 * game.coins + game.bonus;
+
+function land() {
+  game.air = false; game.h = 0; game.vh = 0;
+  const tilted = Math.abs(game.lean) > 20;
+  events.push({ type: "land", tilted });
+  if (!tilted || LV.landing === "ok" || game.clock < game.safeUntil) return;
+  if (LV.landing === "fall") crash();
+  else { game.wobbleUntil = game.clock + 900; events.push({ type: "wobble" }); }
+}
+
+function step(q, h) {
+  const dt = h / 1000;
+  const t = tiltOf(q);
+  game.lean = t.lean - game.level0.lean;
+  game.pitch = t.pitch - game.level0.pitch;
+  const dead = x => Math.sign(x) * Math.max(0, Math.abs(x) - 2);
+  game.steer = clamp(dead(game.lean) / LEAN_FULL, -1, 1);
+  game.tuck = clamp(-game.pitch / TUCK_FULL, 0, 1);
+  game.brake = clamp((game.pitch - BRAKE_FROM) / (BRAKE_FULL - BRAKE_FROM), 0, 1);
+
+  for (const o of obstacles) if (o.vs) o.s += o.vs * dt;  // rolling cars
+  if (game.clock < game.crashUntil) return;
+  if (game.v === 0) { game.v = LV.base * 0.5; game.safeUntil = game.clock + 2000; }
+
+  // Speed: heads toward a target that grows with distance; tuck adds, braking and grass take off
+  const onGrass = Math.abs(game.x) > HALF_W;
+  let target = cruise(game.s) * (1 + 0.35 * game.tuck) * (1 - 0.6 * game.brake);
+  if (onGrass && !game.air) target *= 0.55;
+  if (game.clock < game.wobbleUntil) target *= 0.6;
+  game.v += (target - game.v) * Math.min(1, dt / (target < game.v ? 0.6 : 1.4));
+
+  // Carving: leaning sends you sideways; a bend pushes you toward its outside
+  const control = game.air ? 0.25 : 1;
+  game.x += (game.v * game.steer * STEER * control - game.v * game.v * roadCurve(game.s) * 0.5) * dt;
+  if (Math.abs(game.x) > EDGE) { game.x = Math.sign(game.x) * EDGE; game.v *= 0.97; }
+  const s0 = game.s;
+  game.s += game.v * dt;
+
+  // Jumps: ollies (a nose flick, or the M5 button) and ramps
+  while (game.ollies.length && game.ollies[0] <= game.simT) {
+    game.ollies.shift();
+    if (!game.air && game.clock - game.lastOllie > 350) {
+      game.air = true; game.vh = OLLIE_V; game.lastOllie = game.clock;
+      events.push({ type: "ollie" });
+    }
+  }
+  for (const o of obstacles) {
+    if (o.type !== "ramp" || game.air || Math.abs(game.x - o.x) > o.w / 2) continue;
+    const end = o.s + o.d / 2;
+    if (s0 < end && game.s >= end) {
+      game.air = true; game.vh = 2 + 0.28 * game.v; game.bonus += 25;
+      events.push({ type: "air" });
+    }
+  }
+  if (game.air) {
+    game.h += game.vh * dt - G * dt * dt / 2;
+    game.vh -= G * dt;
+    if (game.h <= 0) land();
+  }
+
+  // Obstacles and coins
+  if (game.clock >= game.safeUntil) {
+    for (const o of obstacles) {
+      if (o.type === "ramp" || o.hit) continue;
+      if (Math.abs(game.s - o.s) < o.d / 2 + R_RIDER && Math.abs(game.x - o.x) < o.w / 2 + R_RIDER && game.h < o.h) {
+        o.hit = true;
+        crash();
+        // Clear what's right ahead so you don't ride straight into it again
+        for (const n of obstacles) if (n.s > game.s - 1 && n.s < game.s + 14) n.hit = true;
+        return;
+      }
+    }
+  }
+  for (const c of coins) {
+    if (!c.got && Math.abs(game.s - c.s) < 0.7 && Math.abs(game.x - c.x) < 0.7 && Math.abs(game.h + 0.8 - c.y) < 1.1) {
+      c.got = true; game.coins++;
+      events.push({ type: "coin" });
+    }
+  }
+}
+
+// Advance the ride to device time `target` in small steps against the interpolated stick
+function simulate(target) {
+  if (game.simT === null || target - game.simT > 250 || target < game.simT - 1000 || game.paused || game.phase === "menu") {
+    game.simT = target;  // first frame, paused, or back from a stall / hidden tab: skip ahead
+    game.ollies.length = 0;
+    return;
+  }
+  while (game.simT < target) {
+    const h = Math.min(STEP_MS, target - game.simT);
+    game.simT += h;
+    game.clock += h;
+    if (game.phase === "play") step(quatAt(game.simT), h);
+    else for (const o of obstacles) if (o.vs) o.s += o.vs * h / 1000;
+  }
+  if (game.phase === "play") fillRoad();
+}
+
+// ---- Page glue ----
+function startGame() {
+  LV = LEVELS[settings.level];
+  Object.assign(game, { phase: "play", paused: false, s: 0, x: 0, h: 0, vh: 0, v: LV.base * 0.6, air: false,
+    lives: LV.lives, coins: 0, bonus: 0, crashUntil: 0, safeUntil: game.clock + 1500, wobbleUntil: 0, nextRowS: 40 });
+  game.ollies.length = 0;
+  obstacles.length = coins.length = 0;
+  fillRoad();
+  sfx.init();
+  document.getElementById("menu").hidden = true;
+  document.getElementById("over").hidden = true;
+  document.getElementById("hud").hidden = false;
+  document.getElementById("tilt").hidden = false;
+  document.getElementById("pause").textContent = "Pause";
+  setPhaseUI();
+  updateHud();
+  events.push({ type: "go" });
+}
+
+function setPhaseUI() {
+  document.getElementById("pause").hidden = document.getElementById("play-hint").hidden = game.phase !== "play";
+  document.getElementById("menu-btn").hidden = game.phase === "menu";
+}
+
+function showMenu() {
+  game.phase = "menu"; game.paused = false;
+  document.getElementById("over").hidden = true;
+  document.getElementById("hud").hidden = true;
+  document.getElementById("tilt").hidden = true;
+  document.getElementById("menu").hidden = false;
+  setPhaseUI();
+}
+
+function togglePause() {
+  if (game.phase !== "play") return;
+  game.paused = !game.paused;
+  document.getElementById("pause").textContent = game.paused ? "Resume" : "Pause";
+  if (game.paused) banner("Paused", "#ffffff", "", 100000); else hideBanner();
+}
+
+// The M5 button starts a run from the menu, and jumps while riding
+function onM5() {
+  if (game.phase !== "play") startGame();
+  else if (!game.paused && ctl.poses.length) game.ollies.push(ctl.poses[ctl.poses.length - 1].t);
+}
+
+function renderMenu() {
+  for (const b of document.querySelectorAll("#levels button")) b.classList.toggle("on", b.dataset.level === settings.level);
+  document.getElementById("level-desc").textContent = LEVELS[settings.level].desc;
+  try { localStorage.setItem("skate", JSON.stringify(settings)); } catch (e) { /* not remembered */ }
+}
+
+function updateHud() {
+  const lives = document.getElementById("lives");
+  lives.replaceChildren(...Array.from({ length: LV.lives }, (_, i) => {
+    const s = document.createElement("span");
+    s.textContent = "♥";
+    if (i >= game.lives) s.className = "lost";
+    return s;
+  }));
+  document.getElementById("s-best").textContent = best[settings.level] || 0;
+}
+
+function setStatus(ok, text) {
+  document.getElementById("dot").className = "dot " + (ok ? "ok" : "err");
+  document.getElementById("status").textContent = text;
+}
+
+let bannerTimer = 0;
+function banner(text, color, small = "", ms = 1200) {
+  const el = document.getElementById("banner");
+  el.textContent = text;
+  if (small) { const s = document.createElement("small"); s.textContent = small; el.appendChild(s); }
+  el.style.color = color;
+  el.classList.add("show");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideBanner, ms);
+}
+const hideBanner = () => document.getElementById("banner").classList.remove("show");
+
+// ---- Sound: everything synthesized with Web Audio ----
+const sfx = {
+  ctx: null,
+  init() {
+    if (this.ctx) { this.ctx.resume(); return; }
+    try { this.ctx = new AudioContext(); } catch (e) { return; }
+    const ctx = this.ctx;
+    this.master = ctx.createGain(); this.master.gain.value = 0.6; this.master.connect(ctx.destination);
+    this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const data = this.noise.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    // Wheels on asphalt: band-passed noise, higher and louder with speed; wind on top when fast
+    const loop = (type, freq) => {
+      const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      src.buffer = this.noise; src.loop = true; src.start();
+      f.type = type; f.frequency.value = freq; g.gain.value = 0;
+      src.connect(f).connect(g).connect(this.master);
+      return { f, g };
+    };
+    this.roll = loop("bandpass", 300);
+    this.wind = loop("highpass", 2500);
+  },
+  ready() { return this.ctx && this.ctx.state === "running"; },
+  // Every frame: speed, and whether the wheels are on the ground
+  ride(v, grounded) {
+    if (!this.ready()) return;
+    const t = this.ctx.currentTime, on = game.phase === "play" && !game.paused && game.clock >= game.crashUntil;
+    this.roll.g.gain.setTargetAtTime(on && grounded ? 0.05 + v * 0.012 : 0, t, 0.05);
+    this.roll.f.frequency.setTargetAtTime(150 + v * 22, t, 0.1);
+    this.wind.g.gain.setTargetAtTime(on ? Math.min(0.12, v * v * 0.00025) : 0, t, 0.2);
+  },
+  tone(f0, f1, len, gain, type = "sine") {
+    if (!this.ready()) return;
+    const ctx = this.ctx, t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + len);
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    o.connect(g).connect(this.master);
+    o.start(t); o.stop(t + len + 0.02);
+  },
+  burst(freq, len, gain, type = "bandpass") {
+    if (!this.ready()) return;
+    const ctx = this.ctx, t = ctx.currentTime, src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = this.noise;
+    f.type = type; f.frequency.value = freq;
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t, Math.random() * 0.5); src.stop(t + len + 0.02);
+  },
+  ollie() { this.burst(1800, 0.06, 0.6); this.tone(180, 90, 0.08, 0.4); },
+  land() { this.burst(900, 0.08, 0.6); this.tone(120, 60, 0.1, 0.5); },
+  coin() { this.tone(1320, 1320, 0.07, 0.15, "square"); setTimeout(() => this.tone(1760, 1760, 0.12, 0.15, "square"), 70); },
+  crash() { this.burst(400, 0.6, 0.9, "lowpass"); this.tone(110, 40, 0.4, 0.6); },
+};
+
+function drainEvents() {
+  for (const e of events.splice(0)) {
+    if (e.type === "ollie") sfx.ollie();
+    else if (e.type === "air") { sfx.ollie(); banner("Big air!", "#ffe066", "+25"); }
+    else if (e.type === "land") sfx.land();
+    else if (e.type === "wobble") banner("Wobble!", "#ffffff", "land level");
+    else if (e.type === "coin") sfx.coin();
+    else if (e.type === "crash") { sfx.crash(); updateHud(); if (game.phase === "play") banner("Ouch!", "#ffb3a8", `${game.lives} ${game.lives === 1 ? "life" : "lives"} left`, 1400); }
+    else if (e.type === "level") banner("Level set", "#ffffff");
+    else if (e.type === "go") banner("Go!", "#ffffff", "", 900);
+    else if (e.type === "over") {
+      setPhaseUI();
+      document.getElementById("over-sub").textContent =
+        `${LV.label}: ${Math.floor(game.s)} m, ${game.coins} coins, ${e.score} points.${e.isBest ? " New best!" : ` Best: ${best[settings.level] || 0}.`} Press the M5 button or Ride again for another run.`;
+      setTimeout(() => { if (game.phase === "over") document.getElementById("over").hidden = false; }, 1400);
+    }
+  }
+}
+
+for (const b of document.querySelectorAll("#levels button")) b.onclick = () => { settings.level = b.dataset.level; renderMenu(); };
+document.getElementById("start").onclick = startGame;
+document.getElementById("again").onclick = startGame;
+document.getElementById("to-menu").onclick = showMenu;
+document.getElementById("menu-btn").onclick = showMenu;
+document.getElementById("level-btn").onclick = setLevel;
+document.getElementById("pause").onclick = togglePause;
+renderMenu();
+setPhaseUI();
+
+let imu = "";
+setStatus(false, "Connecting…");
+connectStream({
+  open() {
+    resetStream();
+    game.simT = null;
+    setStatus(true, "Live");
+  },
+  batch(name, batch) {
+    if (!imu) setStatus(true, `Live · ${name}`);
+    imu = name;
+    feedBatch(batch);
+  },
+  closed(retryMs) { setStatus(false, `Disconnected — retrying in ${(retryMs / 1000).toFixed(1)} s`); },
+});
+
+// ---- 3D view ----
+import("https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js").then(buildScene, () => {
+  document.getElementById("menu-err").textContent =
+    "Couldn't load the 3D library. This page needs internet access for three.js.";
+});
+
+function buildScene(THREE) {
+  const V = a => new THREE.Vector3(a[0], a[1], a[2]);
+  const view = document.getElementById("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  view.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xa9d3f2);
+  scene.fog = new THREE.Fog(0xa9d3f2, 60, 150);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 400);
+  scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x4a6b3a, 1.7));
+  const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  Object.assign(sun.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, near: 1, far: 40 });
+  scene.add(sun, sun.target);
+  const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...extra });
+
+  // ---- Road, built in 40 m chunks ahead of you and dropped behind ----
+  const CHUNK = 40;
+  const chunks = new Map();
+  const asphalt = mat(0x3b3e44), grass = mat(0x5e9e4c), field = mat(0x4f8a41), paint = mat(0xf2f2ea);
+  const trunkGeo = new THREE.CylinderGeometry(0.15, 0.2, 1.6, 6), leafGeo = new THREE.ConeGeometry(1.3, 3.4, 8);
+  const trunkMat = mat(0x6b4a2f), leafMat = mat(0x2f6e3a);
+  // A strip between lateral offsets xa and xb along the road, from s0 to s1
+  function strip(s0, s1, xa, xb, dy, material, dash = 0) {
+    const pos = [], idx = [];
+    for (let s = s0, i = 0; s <= s1 + 1e-6; s += 1, i++) {
+      pos.push(...at(s, xa, dy), ...at(s, xb, dy));
+      if (s < s1 && (!dash || Math.floor(s / dash) % 2 === 0)) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);  // facing up
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, material);
+    m.receiveShadow = true;
+    return m;
+  }
+  function buildChunk(k) {
+    const s0 = k * CHUNK, s1 = s0 + CHUNK, group = new THREE.Group();
+    group.add(strip(s0, s1, -HALF_W, HALF_W, 0, asphalt));
+    group.add(strip(s0, s1, HALF_W, EDGE, -0.03, grass), strip(s0, s1, -EDGE, -HALF_W, -0.03, grass));
+    group.add(strip(s0, s1, EDGE, 60, -0.3, field), strip(s0, s1, -60, -EDGE, -0.3, field));
+    group.add(strip(s0, s1, -0.06, 0.06, 0.01, paint, 3));
+    group.add(strip(s0, s1, HALF_W - 0.3, HALF_W - 0.18, 0.01, paint), strip(s0, s1, -HALF_W + 0.18, -HALF_W + 0.3, 0.01, paint));
+    const n = 14, trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, n), leaves = new THREE.InstancedMesh(leafGeo, leafMat, n);
+    const m4 = new THREE.Matrix4();
+    for (let i = 0; i < n; i++) {
+      const s = rand(s0, s1), x = (Math.random() < 0.5 ? -1 : 1) * rand(EDGE + 2, 34), sc = rand(0.8, 1.5), p = at(s, x, -0.3);
+      trunks.setMatrixAt(i, m4.compose(V([p[0], p[1] + 0.8 * sc, p[2]]), new THREE.Quaternion(), new THREE.Vector3(sc, sc, sc)));
+      leaves.setMatrixAt(i, m4.compose(V([p[0], p[1] + 3 * sc, p[2]]), new THREE.Quaternion(), new THREE.Vector3(sc, sc, sc)));
+    }
+    trunks.castShadow = leaves.castShadow = true;
+    group.add(trunks, leaves);
+    scene.add(group);
+    return group;
+  }
+  function updateChunks() {
+    const first = Math.floor((game.s - 30) / CHUNK), last = Math.floor((game.s + 150) / CHUNK);
+    for (let k = first; k <= last; k++) if (!chunks.has(k)) chunks.set(k, buildChunk(k));
+    for (const [k, group] of chunks) {
+      if (k >= first && k <= last) continue;
+      group.traverse(o => { if (o.geometry && o.geometry !== trunkGeo && o.geometry !== leafGeo) o.geometry.dispose(); });
+      scene.remove(group);
+      chunks.delete(k);
+    }
+  }
+
+  // ---- Obstacles, coins ----
+  const stripes = (() => {
+    const c = document.createElement("canvas"); c.width = 64; c.height = 16;
+    const g = c.getContext("2d");
+    for (let i = 0; i < 4; i++) { g.fillStyle = i % 2 ? "#ffffff" : "#d63a2f"; g.fillRect(i * 16, 0, 16, 16); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const CAR_COLORS = [0x2a78d6, 0xd6452a, 0xe8e2d4, 0x2b2f36, 0x3d9a5b, 0xf0b429];
+  function makeObstacle(o) {
+    const g = new THREE.Group();
+    if (o.type === "cone") {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.55, 16), mat(0xf07a1a));
+      cone.position.y = 0.275;
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.155, 0.1, 16), mat(0xffffff));
+      band.position.y = 0.3;
+      g.add(cone, band);
+    } else if (o.type === "rock") {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5), mat(0x8a8d91, { flatShading: true }));
+      rock.scale.set(1, 0.8, 0.9); rock.position.y = 0.2; rock.rotation.set(rand(0, 3), rand(0, 3), 0);
+      g.add(rock);
+    } else if (o.type === "barrier") {
+      const tex = stripes.clone(); tex.repeat.set(o.w / 1.2, 1); tex.needsUpdate = true;
+      const board = new THREE.Mesh(new THREE.BoxGeometry(o.w, 0.35, 0.12), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 }));
+      board.position.y = 0.8;
+      g.add(board);
+      for (const x of [-o.w / 2 + 0.2, o.w / 2 - 0.2]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1, 0.3), mat(0x9aa0a6));
+        leg.position.set(x, 0.5, 0);
+        g.add(leg);
+      }
+    } else if (o.type === "log") {
+      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 2 * HALF_W + 1, 12), mat(0x7a5232));
+      log.rotation.z = Math.PI / 2; log.position.y = 0.2;
+      g.add(log);
+    } else if (o.type === "car") {
+      const paintMat = mat(CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)], { roughness: 0.35, metalness: 0.3 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.7, 4.2), paintMat);
+      body.position.y = 0.55;
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 2.2), mat(0x1f2a36, { roughness: 0.2, metalness: 0.5 }));
+      cabin.position.set(0, 1.15, 0.2);
+      g.add(body, cabin);
+      for (const [x, z] of [[-0.85, -1.4], [0.85, -1.4], [-0.85, 1.4], [0.85, 1.4]]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.22, 14), mat(0x15171a));
+        wheel.rotation.z = Math.PI / 2; wheel.position.set(x, 0.33, z);
+        g.add(wheel);
+      }
+    } else if (o.type === "ramp") {
+      // A wedge rising toward the far end (−z)
+      const shape = new THREE.Shape([new THREE.Vector2(o.d / 2, 0), new THREE.Vector2(-o.d / 2, 0), new THREE.Vector2(-o.d / 2, 0.55)]);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: o.w, bevelEnabled: false });
+      geo.translate(0, 0, -o.w / 2);
+      const wedge = new THREE.Mesh(geo, mat(0xf0c419));
+      wedge.rotation.y = -Math.PI / 2;
+      g.add(wedge);
+    }
+    g.traverse(m => { if (m.isMesh) m.castShadow = true; });
+    scene.add(g);
+    return g;
+  }
+  const obstacleMeshes = new Map();
+  const coinGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.05, 20), coinMat = mat(0xf5c542, { metalness: 0.7, roughness: 0.25, emissive: 0x3a2a00 });
+  const coinPool = [];
+
+  // ---- The skater: a figure standing sideways on a board (facing +X), leaning with you ----
+  const skaterRoot = new THREE.Group(), rider = new THREE.Group();
+  const skin = mat(0xd8cbbb), shirt = mat(0x2a78d6), pants = mat(0x2c3140), helmet = mat(0xf07a1a, { roughness: 0.4 });
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.03, 0.82), mat(0x2b2b2b));
+  deck.position.y = 0.1;
+  const board = new THREE.Group();
+  board.add(deck);
+  for (const z of [-0.28, 0.28]) for (const x of [-0.09, 0.09]) {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.03, 12), mat(0xf2e3b3));
+    wheel.rotation.z = Math.PI / 2; wheel.position.set(x, 0.04, z);
+    board.add(wheel);
+  }
+  const limb = (r, len, m) => { const p = new THREE.Group(), mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 10), m); mesh.position.y = -len / 2; mesh.castShadow = true; p.add(mesh); return p; };
+  const legF = limb(0.06, 0.72, pants), legB = limb(0.06, 0.72, pants);
+  legF.position.set(0, 0.95, -0.2); legB.position.set(0, 0.95, 0.2);
+  const hips = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.1, 4, 10), pants);
+  hips.position.y = 0.98;
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.36, 4, 10), shirt);
+  torso.position.y = 1.32;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), skin);
+  head.position.y = 1.78;
+  const lid = new THREE.Mesh(new THREE.SphereGeometry(0.135, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), helmet);
+  lid.position.y = 1.8;
+  const armF = limb(0.045, 0.5, shirt), armB = limb(0.045, 0.5, shirt);
+  armF.position.set(0, 1.52, -0.18); armB.position.set(0, 1.52, 0.18);
+  armF.rotation.x = 1.2; armB.rotation.x = -1.2;  // arms out for balance
+  for (const m of [hips, torso, head, lid]) m.castShadow = true;
+  rider.add(legF, legB, hips, torso, head, lid, armF, armB);
+  skaterRoot.add(board, rider);
+  board.traverse(m => { if (m.isMesh) m.castShadow = true; });
+  scene.add(skaterRoot);
+
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+  resize();
+  document.addEventListener("pointerdown", () => sfx.init(), { once: true });
+
+  const camPos = new THREE.Vector3(...at(-6, 0, 2.5));
+  let lastFrame = performance.now(), hudAt = 0;
+  function frame() {
+    requestAnimationFrame(frame);
+    const now = performance.now(), dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    drainEvents();
+    if (streamReady()) {
+      simulate(deviceNow());
+      drainEvents();
+      if (game.phase === "menu") { const t = tiltOf(quatAt(deviceNow())); game.lean = t.lean - game.level0.lean; game.pitch = t.pitch - game.level0.pitch; }
+    }
+    updateChunks();
+
+    // Skater: follows the road, leans with you, crouches in a tuck, tumbles in a crash
+    const crashing = game.clock < game.crashUntil && game.phase !== "menu";
+    const p = at(game.s, game.x, game.h);
+    skaterRoot.position.copy(V(p));
+    skaterRoot.rotation.set(0, -Math.atan(roadDX(game.s)), 0);
+    const lean = clamp(game.lean, -35, 35) * Math.PI / 180;
+    if (crashing) {
+      const f = 1 - (game.crashUntil - game.clock) / 1400;
+      rider.rotation.set(-f * 2.2, 0, 0);
+      rider.position.set(0, -0.3 * f, -f * 1.2);
+    } else {
+      rider.rotation.set(0, 0, -lean * 0.8);
+      const crouch = 0.12 * game.tuck + (game.air ? 0.1 : 0);
+      rider.position.set(0, -crouch, 0);
+      legF.scale.y = legB.scale.y = 1 - crouch * 0.9;
+    }
+    board.rotation.set(game.air ? clamp(game.vh / OLLIE_V, -1, 1) * 0.35 : 0, 0, -lean * 0.6);
+    const blink = game.clock < game.safeUntil && game.phase === "play" && Math.floor(now / 120) % 2 === 0;
+    skaterRoot.visible = !blink;
+    sfx.ride(game.v, !game.air);
+
+    // Obstacles: add meshes for new ones, move rolling cars, drop passed ones
+    for (const o of obstacles) {
+      let g = obstacleMeshes.get(o);
+      if (!g) { g = makeObstacle(o); obstacleMeshes.set(o, g); }
+      g.position.copy(V(at(o.s, o.x)));
+      g.rotation.y = -Math.atan(roadDX(o.s));
+      g.visible = !(o.hit && o.type !== "ramp");
+    }
+    for (const [o, g] of obstacleMeshes) {
+      if (obstacles.includes(o)) continue;
+      g.traverse(m => { if (m.geometry) m.geometry.dispose(); });
+      scene.remove(g);
+      obstacleMeshes.delete(o);
+    }
+    while (coinPool.length < coins.length) { const c = new THREE.Mesh(coinGeo, coinMat); c.castShadow = true; scene.add(c); coinPool.push(c); }
+    coinPool.forEach((m, i) => {
+      const c = coins[i];
+      m.visible = !!c && !c.got;
+      if (!c) return;
+      m.position.copy(V(at(c.s, c.x, c.y)));
+      m.rotation.set(Math.PI / 2, 0, now / 300 + i);
+    });
+
+    // Chase camera: behind and above, easing after you; wider view when fast
+    const target = V(at(game.s - 6, game.x * 0.6, 2.6 + game.h * 0.5));
+    if (camPos.distanceTo(target) > 20) camPos.copy(target);  // a new run: jump there instead of flying
+    else camPos.lerp(target, 1 - Math.exp(-dt * 6));
+    camera.position.copy(camPos);
+    camera.lookAt(...at(game.s + 8, game.x * 0.8, 0.6));
+    camera.fov = 58 + clamp(game.v, 0, 25) * 0.5;
+    camera.updateProjectionMatrix();
+    sun.position.copy(V(add(p, [6, 14, 4])));
+    sun.target.position.copy(V(p));
+
+    // Tilt gauge, and the numbers a few times a second
+    document.getElementById("tilt-dot").style.left = `${50 + clamp(game.lean / LEAN_FULL, -1, 1) * 46}%`;
+    if (now - hudAt > 150 && game.phase !== "menu") {
+      hudAt = now;
+      document.getElementById("s-score").textContent = runScore();
+      document.getElementById("s-dist").textContent = Math.floor(game.s);
+      document.getElementById("s-speed").textContent = Math.round(game.v * 3.6);
+    }
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>
+)HTML";

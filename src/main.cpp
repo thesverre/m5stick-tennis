@@ -8,6 +8,9 @@
 #include "page.h"
 #include "motion.h"
 #include "tennis.h"
+#include "controller.h"
+#include "saber.h"
+#include "skate.h"
 
 // IMU samples are taken at a fixed rate into a ring buffer and pushed to every
 // WebSocket client in small batches. New clients first get the buffered history.
@@ -158,8 +161,17 @@ void setup() {
   server.on("/tennis", HTTP_GET, [](AsyncWebServerRequest* req) {
     req->send(200, "text/html", TENNIS_HTML);
   });
+  server.on("/saber", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "text/html", SABER_HTML);
+  });
+  server.on("/skate", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "text/html", SKATE_HTML);
+  });
   server.on("/motion.js", HTTP_GET, [](AsyncWebServerRequest* req) {
     req->send(200, "text/javascript", MOTION_JS);
+  });
+  server.on("/controller.js", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "text/javascript", CONTROLLER_JS);
   });
   server.onNotFound([](AsyncWebServerRequest* req) {
     req->send(404, "text/plain", "Not found");
