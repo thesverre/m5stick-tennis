@@ -3,3 +3,4 @@
 include/secrets.h
 backup/
 include/web_assets.h
+recordings/

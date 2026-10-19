@@ -1,0 +1,958 @@
+<!doctype html>
+<!--
+  Red Light, Green Light at "/redlight": a whole-body game after the first game in Squid Game.
+  The stick goes in your trouser pocket. While the doll sings with her back turned (green light),
+  run on the spot to cross the field; when she turns around (red light), freeze. Movement she
+  sees costs a life. Each time you reach the finish line a new round starts, a little harder:
+  quicker songs, longer stares, a sharper eye. How many rounds can you clear?
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Red Light, Green Light</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: rgba(252,252,251,0.9); --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --border: rgba(11,11,11,0.10); --accent: #1f8a70; --good: #0ca30c; --bad: #d03b3b;
+  --green: #18a058; --red: #d63031;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: rgba(26,26,25,0.86); --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+    --border: rgba(255,255,255,0.10); --accent: #2bb38f;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: #9ccbe9; color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#view { position: fixed; inset: 0; }
+#view canvas { display: block; width: 100%; height: 100%; }
+.panel { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 14px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+#brand { top: 12px; left: 12px; display: flex; flex-direction: column; gap: 2px; }
+#brand h1 { font-size: 17px; margin: 0; }
+#brand a { color: var(--accent); text-decoration: none; font-size: 13px; }
+.status { color: var(--ink-2); display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--good); } .dot.err { background: var(--bad); }
+#hud { top: 12px; right: 12px; }
+.tiles { display: grid; grid-auto-flow: column; gap: 4px 18px; }
+.stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.stat .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 12px; font-weight: 400; color: var(--muted); }
+#lives span { color: var(--bad); letter-spacing: 2px; }
+#lives span.lost { color: var(--muted); opacity: .35; }
+/* The light: what the doll is doing right now */
+#light { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); padding: 8px 22px; border-radius: 999px;
+  font: 800 26px/1.2 system-ui, sans-serif; letter-spacing: .06em; color: #fff; background: var(--green);
+  box-shadow: 0 4px 18px rgba(0,0,0,.25); white-space: nowrap; }
+#light.red { background: var(--red); }
+/* Movement meter: how much you're moving, with a mark where the doll sees it */
+#meter { bottom: 76px; left: 12px; width: 76px; padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+#meter .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+#meter .track { position: relative; width: 14px; height: 120px; border-radius: 7px; background: var(--border); overflow: hidden; }
+#meter .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--muted); border-radius: 7px; }
+#meter .fill.over { background: var(--red); }
+#meter .mark { position: absolute; left: -3px; right: -3px; height: 2px; background: var(--ink); }
+#meter .v { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+/* Progress across the field */
+#progress { bottom: 76px; left: 100px; right: 12px; max-width: 420px; padding: 8px 12px; }
+#progress .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+#progress .track { position: relative; height: 10px; border-radius: 5px; background: var(--border); }
+#progress .you { position: absolute; top: -3px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; }
+#progress .bot { position: absolute; top: 1px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: var(--muted); }
+#progress .bot.out { background: var(--red); opacity: .5; }
+#controls { bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px;
+  max-width: calc(100% - 24px); }
+.hint { color: var(--ink-2); font-size: 12px; }
+button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#banner { position: fixed; top: 32%; left: 50%; transform: translate(-50%, -50%) scale(.9); pointer-events: none;
+  font: 800 60px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 3px 16px rgba(0,0,0,.4);
+  opacity: 0; transition: opacity .2s, transform .2s; text-align: center; white-space: nowrap; }
+#banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+#banner small { display: block; font-size: 20px; font-weight: 600; margin-top: 8px; }
+#pop { position: fixed; top: 46%; left: 50%; transform: translateX(-50%); pointer-events: none; font: 700 22px system-ui, sans-serif;
+  color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,.45); opacity: 0; transition: opacity .3s; white-space: nowrap; }
+#pop.show { opacity: 1; transition: none; }
+.dialog { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); padding: 18px 20px;
+  max-height: calc(100% - 32px); overflow: auto; }
+.dialog h2 { margin: 0 0 8px; font-size: 20px; }
+.dialog ol { margin: 0 0 12px; padding-left: 20px; color: var(--ink-2); }
+.dialog li { margin-bottom: 4px; }
+.dialog .key { display: inline-block; padding: 0 6px; border-radius: 4px; color: #fff; font-weight: 600; }
+.label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-top: 10px; }
+.seg { display: flex; gap: 6px; margin: 4px 0; }
+.seg button { flex: 1; }
+.seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.desc { color: var(--ink-2); font-size: 12px; min-height: 2.9em; }
+.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.err { color: var(--bad); }
+@media (max-width: 720px) {
+  #hud { top: auto; bottom: 70px; left: 12px; right: 12px; }
+  #meter { bottom: 150px; }
+  #progress { bottom: 150px; }
+  #light { top: 110px; font-size: 20px; }
+  #controls .hint { display: none; }
+  #banner { font-size: 40px; }
+}
+</style>
+</head>
+<body>
+<div id="view"></div>
+
+<div class="panel" id="brand">
+  <h1>Red Light, Green Light</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+  <a href="/">← Motion page</a>
+</div>
+
+<div id="light" hidden>GREEN LIGHT</div>
+
+<div class="panel" id="hud" hidden>
+  <div class="tiles">
+    <div class="stat"><div class="k">Round</div><div class="v" id="s-round">1</div></div>
+    <div class="stat"><div class="k">Lives</div><div class="v" id="lives"></div></div>
+    <div class="stat"><div class="k">To go</div><div class="v" id="s-togo">0 <small>m</small></div></div>
+    <div class="stat"><div class="k">Time</div><div class="v" id="s-time">0 <small>s</small></div></div>
+  </div>
+</div>
+
+<div class="panel" id="meter" hidden>
+  <div class="k">Moving</div>
+  <div class="track"><div class="fill" id="m-fill"></div><div class="mark" id="m-mark"></div></div>
+  <div class="v" id="m-text">still</div>
+</div>
+
+<div class="panel" id="progress" hidden>
+  <div class="k">Start → finish</div>
+  <div class="track" id="p-track"><div class="you" id="p-you"></div></div>
+</div>
+
+<div class="panel" id="controls">
+  <span class="hint">Space or click: pause · M: music</span>
+  <button id="pause">Pause</button>
+  <button id="music">Music: on</button>
+  <button id="menu-btn">Menu</button>
+</div>
+
+<div id="banner"></div>
+<div id="pop"></div>
+
+<div class="panel dialog" id="menu">
+  <h2>Red Light, Green Light</h2>
+  <ol>
+    <li>Put the stick in a snug front trouser pocket and stand facing the screen.</li>
+    <li>When the game starts, stand still for 2 seconds while the stick learns how it sits.</li>
+    <li><span class="key" style="background:var(--green)">Green light</span>: the doll sings with her back to you
+      (“mugunghwa kkochi pieotseumnida”, from a Korean children's game).
+      <b>Run on the spot</b>, lifting your knees, to cross the field.</li>
+    <li><span class="key" style="background:var(--red)">Red light</span>: she turns around. <b>Freeze.</b>
+      If she sees you move, you lose a life and are sent back.</li>
+    <li>Reach the red finish line before the time runs out. Then the next round starts, a little harder,
+      and your lives carry over.</li>
+  </ol>
+  <div class="label">Level</div>
+  <div class="seg" id="levels">
+    <button data-level="easy">Easy</button><button data-level="medium">Medium</button><button data-level="hard">Hard</button>
+  </div>
+  <div class="desc" id="level-desc"></div>
+  <div class="err" id="menu-err"></div>
+  <div class="actions"><button class="primary" id="start">Start</button><span class="hint">or press Space</span></div>
+</div>
+
+<div class="panel dialog" id="over" hidden>
+  <h2 id="over-title">Game over</h2>
+  <div class="summary" id="summary"></div>
+  <div class="desc" id="over-sub"></div>
+  <div class="actions"><button class="primary" id="again">Play again</button><button id="to-menu">Menu</button></div>
+</div>
+
+<script src="/motion.js"></script>
+<script src="/controller.js"></script>
+<script>
+// ---- Game model ----
+// The field runs from the start line (s = 0) into the screen to the finish line (s = FIELD);
+// s maps to z = −s. Lengths in m, times in ms unless named _S.
+const FIELD = 50, DOLL_S = 62;
+const STRIDE_M = 1.4;                 // how far one stride of the pocket leg (two steps) carries you
+const MAX_V = 6;                      // fastest you can go
+// You run at the speed of your strides (STRIDE_M per stride period), picking it up over
+// SPEED_UP_S and easing off over EASE_S; when the strides stop for STOP_PERIODS of a stride, so do you
+const SPEED_UP_S = 0.3, EASE_S = 0.2, STOP_PERIODS = 1.6, STRIDE_MS = [250, 1500];
+const TURN_MS = 450;                  // the doll turning around, either way: safe to move
+const SENT_BACK = 5;                  // how far a life lost sends you back
+// Strides: the pocket thigh swinging forward past STRIDE_HI after being back under STRIDE_LO
+// (a quick jog swung it to 15–23° and back to 2–5°).
+const STRIDE_HI = 12, STRIDE_LO = 8;
+// Movement: the rotation rate and how far the acceleration is from 1 g, both smoothed over
+// MOTION_TAU_S. In a recording, standing still read up to 10°/s and 0.02 g, standing just after
+// running up to 31°/s and 0.1 g, the first half second after stopping 92°/s, and running or
+// stepping 100–135°/s. Movement has to last MOVE_MS to be seen, so one jolt doesn't count.
+const MOTION_TAU_S = 0.08, MOVE_MS = 80;
+
+// Levels set where round 1 starts:
+//  time   — seconds to reach the finish
+//  green  — how long the doll sings, in seconds; red — how long she watches
+//  grace  — ms after she turns around before she's looking, to come to a stop
+//  dps, g — rotation rate and acceleration that count as moving
+//  botOut — chance each other player is caught per red light
+const LEVELS = {
+  easy: {
+    label: "Easy", desc: "Starts with 80 seconds, long songs, time to come to a stop, and only clear movement is seen. 3 lives.",
+    time: 80, green: [3, 5.5], red: [2.5, 4], grace: 800, dps: 70, g: 0.25, lives: 3, botOut: 0.06,
+  },
+  medium: {
+    label: "Medium", desc: "Starts with 65 seconds, quicker songs, longer stares, and smaller movements are seen. 2 lives.",
+    time: 65, green: [2, 4.5], red: [2.5, 4.5], grace: 600, dps: 50, g: 0.18, lives: 2, botOut: 0.1,
+  },
+  hard: {
+    label: "Hard", desc: "Starts with 60 seconds, songs that can end any moment, and she sees you sway. One life.",
+    time: 60, green: [1.5, 4], red: [2.5, 4.5], grace: 450, dps: 38, g: 0.13, lives: 1, botOut: 0.14,
+  },
+};
+// Each round after the first is harder: songs ×0.85, stares +0.3 s, less time to stop (×0.88) and
+// a sharper eye (×0.9), 4 s less on the clock. Floors keep it playable: the eye never gets below
+// what standing just after running read in the recording (31°/s), nor the time to stop below 0.3 s.
+// Within a round, the songs also get shorter the closer you are to the doll, down to SONG_NEAR.
+const SONG_NEAR = 0.6;
+function roundRules(r) {
+  const k = n => Math.pow(n, r);
+  return {
+    time: Math.max(40, LV.time - 4 * r),
+    green: LV.green.map(v => Math.max(0.8, v * k(0.85))),
+    red: LV.red.map(v => v + 0.3 * r),
+    grace: Math.max(300, LV.grace * k(0.88)),
+    dps: Math.max(32, LV.dps * k(0.9)),
+    g: Math.max(0.1, LV.g * k(0.9)),
+    botOut: Math.min(0.4, LV.botOut + 0.03 * r),
+  };
+}
+let R;  // the rules of the round in play
+
+const settings = { level: "easy", music: true };
+try { Object.assign(settings, JSON.parse(localStorage.getItem("redlight") || "{}")); } catch (e) { /* defaults */ }
+if (!LEVELS[settings.level]) settings.level = "easy";
+let LV = LEVELS[settings.level];
+R = roundRules(0);
+let best = {};
+try { best = JSON.parse(localStorage.getItem("redlight-best") || "{}"); } catch (e) { /* none yet */ }
+
+const game = {
+  phase: "menu",             // "menu" | "calibrate" | "countdown" | "play" | "over"
+  paused: false, clock: 0,   // game time, ms: runs only while samples arrive and the game isn't paused
+  calibEnd: 0, calibSum: [0, 0, 0], countEnd: 0, count: 0,
+  up0: null,                 // "up" in stick coordinates while you stood still
+  light: "green",            // "green" | "turning" (to face you) | "red" | "back" (turning away)
+  lightAt: 0, lightUntil: 0, songMs: 0,
+  caughtThisRed: false, moveMs: 0,
+  pos: 0, v: 0, vTarget: 0, period: 700, lastStride: -1e9, angle: 0, armed: false, strides: 0,
+  round: 0, lives: 3, timeLeft: 0, totalTime: 0, caughtAt: -1e9, caught: 0, result: "",
+};
+const motion = { w: 0, a: 0, level: 0 };  // level: 1 = as much as the doll notices
+const BOT_COUNT = 9;
+const bots = [];             // {x, pos, speed, out, outAt, done}
+const events = [];
+
+function setLight(light, ms) {
+  game.light = light;
+  game.lightAt = game.clock;
+  game.lightUntil = game.clock + ms;
+}
+
+function nextLight() {
+  if (game.light === "green") { setLight("turning", TURN_MS); events.push({ type: "turning" }); return; }
+  if (game.light === "turning") {
+    setLight("red", rand(...R.red) * 1000);
+    game.caughtThisRed = false;
+    game.moveMs = 0;
+    game.v = game.vTarget = 0;  // you stop where you are
+    // Some of the others don't stop in time
+    for (const b of bots) if (!b.out && !b.done && Math.random() < R.botOut) b.outAt = game.clock + rand(250, game.lightUntil - game.clock - 300);
+    events.push({ type: "red" });
+    return;
+  }
+  if (game.light === "red") { setLight("back", TURN_MS); return; }
+  startSong();
+}
+
+// The closer you are to the doll, the shorter her songs
+function startSong() {
+  game.songMs = rand(...R.green) * 1000 * (1 - (1 - SONG_NEAR) * clamp(game.pos / FIELD, 0, 1));
+  setLight("green", game.songMs);
+  events.push({ type: "green", ms: game.songMs });
+}
+
+// Back to the start line, with the rules for round r and a fresh crowd
+function startRound(r) {
+  game.round = r;
+  R = roundRules(r);
+  Object.assign(game, { phase: "countdown", countEnd: game.clock + 3000, count: 0, light: "green", lightAt: game.clock,
+    lightUntil: Infinity, caughtThisRed: false, moveMs: 0, pos: 0, v: 0, vTarget: 0, timeLeft: R.time });
+  bots.length = 0;
+  for (let i = 0; i < BOT_COUNT; i++) {
+    const side = i % 2 ? 1 : -1, x = side * (1.6 + Math.floor(i / 2) * 1.6 + rand(-0.3, 0.3));
+    bots.push({ x, pos: rand(-1.5, 0.5), speed: rand(1.4, 2.6), out: false, outAt: 0, done: false, num: Math.floor(rand(1, 457)) });
+  }
+  events.push({ type: "round" });
+}
+
+// The game ends when you're out of lives or time; the score is the rounds you cleared
+function finish(result) {
+  game.phase = "over";
+  game.result = result;
+  const isBest = game.round > (best[settings.level] || 0);
+  if (isBest) { best[settings.level] = game.round; try { localStorage.setItem("redlight-best", JSON.stringify(best)); } catch (e) { /* not saved */ } }
+  events.push({ type: "over", result, isBest });
+}
+
+function caught() {
+  game.caughtThisRed = true;
+  game.lives--;
+  game.caught++;
+  game.caughtAt = game.clock;
+  if (game.lives <= 0) { finish("out"); return; }
+  game.pos = Math.max(0, game.pos - SENT_BACK);
+  game.v = game.vTarget = 0;
+  events.push({ type: "caught" });
+}
+
+// Everything runs on the stick's samples, in its own time
+ctl.onSample = (s, dt) => {
+  const k = Math.min(1, dt / MOTION_TAU_S);
+  motion.w += (Math.hypot(...orient.w) - motion.w) * k;
+  motion.a += (Math.abs(Math.hypot(...s.a) - 1) - motion.a) * k;
+  motion.level = Math.max(motion.w / R.dps, motion.a / R.g);
+  if (game.paused || game.phase === "menu" || game.phase === "over") return;
+  const ms = dt * 1000;
+  game.clock += ms;
+  const up = rotationMatrix(orient.q)[2];
+
+  if (game.phase === "calibrate") {
+    game.calibSum = add(game.calibSum, up);
+    if (game.clock >= game.calibEnd) {
+      game.up0 = unit(game.calibSum);
+      game.phase = "countdown";
+      game.countEnd = game.clock + 3000;
+      game.count = 0;
+    }
+    return;
+  }
+  if (game.phase === "countdown") {
+    const n = Math.ceil((game.countEnd - game.clock) / 1000);
+    if (n !== game.count && n > 0) { game.count = n; events.push({ type: "count", n }); }
+    if (game.clock >= game.countEnd) {
+      game.phase = "play";
+      startSong();
+    }
+    return;
+  }
+
+  // Strides. While you stand still the standing reference follows the stick, in case it shifts
+  // in the pocket.
+  game.angle = Math.acos(clamp(dot(up, game.up0), -1, 1)) * 180 / Math.PI;
+  if (motion.w < 15 && motion.a < 0.03) game.up0 = unit(mix(game.up0, up, Math.min(1, dt / 6)));
+  if (game.angle < STRIDE_LO) game.armed = true;
+  if (game.armed && game.angle > STRIDE_HI) {
+    game.armed = false;
+    game.strides++;
+    const period = game.clock - game.lastStride;
+    game.lastStride = game.clock;
+    // The first stride from standing gets you going; after that the stride rate sets the pace
+    if (period >= STRIDE_MS[0] && period <= STRIDE_MS[1]) { game.period = period; game.vTarget = Math.min(MAX_V, STRIDE_M / (period / 1000)); }
+    else game.vTarget = Math.max(game.vTarget, 1.5);
+  }
+  if (game.clock - game.lastStride > STOP_PERIODS * game.period) game.vTarget = 0;
+
+  if (game.clock >= game.lightUntil) nextLight();
+
+  // The doll is looking: once you've had the grace time to stop, movement that lasts is seen
+  if (game.light === "red" && !game.caughtThisRed && game.clock - game.lightAt > R.grace) {
+    game.moveMs = motion.level > 1 ? game.moveMs + ms : 0;
+    if (game.moveMs >= MOVE_MS) { caught(); if (game.phase === "over") return; }
+  }
+
+  if (game.light !== "red") {
+    game.v += (game.vTarget - game.v) * Math.min(1, dt / (game.vTarget > game.v ? SPEED_UP_S : EASE_S));
+    game.pos += game.v * dt;
+  }
+  for (const b of bots) {
+    if (b.out || b.done) continue;
+    if (game.light === "green" || game.light === "back") b.pos += b.speed * dt;
+    if (b.outAt && game.clock >= b.outAt) { b.out = true; b.pos += 0.4;  // a step too many
+      b.outClock = game.clock; events.push({ type: "botOut", b }); }
+    if (b.pos >= FIELD) b.done = true;
+  }
+
+  if (game.pos >= FIELD) {
+    events.push({ type: "cleared", round: game.round + 1 });
+    startRound(game.round + 1);
+    return;
+  }
+  game.timeLeft -= dt;
+  game.totalTime += dt;
+  if (game.timeLeft <= 0) { game.timeLeft = 0; finish("time"); }
+};
+ctl.onPress = bit => { if (bit === 1) onStartKey(); };
+
+// ---- Page glue ----
+function startGame() {
+  LV = LEVELS[settings.level];
+  Object.assign(game, { phase: "calibrate", paused: false, calibEnd: game.clock + 2000, calibSum: [0, 0, 0], up0: null,
+    light: "green", lightAt: game.clock, lightUntil: Infinity, armed: false, strides: 0, lastStride: -1e9, period: 700,
+    lives: LV.lives, totalTime: 0, caughtAt: -1e9, caught: 0, result: "" });
+  startRound(0);
+  game.phase = "calibrate";  // stand still first; the countdown follows
+  events.length = 0;
+  sfx.init();
+  sfx.setMood("play");
+  sfx.startMusic();
+  for (const id of ["menu", "over"]) document.getElementById(id).hidden = true;
+  for (const id of ["hud", "meter", "progress", "light"]) document.getElementById(id).hidden = false;
+  document.getElementById("pause").textContent = "Pause";
+  buildProgressDots();
+  setPhaseUI();
+  updateHud();
+  banner("Stand still", "#ffffff", "learning how the stick sits…", 2000);
+}
+
+function setPhaseUI() {
+  const playing = game.phase !== "menu" && game.phase !== "over";
+  document.getElementById("pause").hidden = !playing;
+  document.getElementById("controls").hidden = game.phase === "menu";
+}
+
+function showMenu() {
+  game.phase = "menu"; game.paused = false;
+  sfx.stopSong();
+  sfx.stopMusic();
+  for (const id of ["over", "hud", "meter", "progress", "light"]) document.getElementById(id).hidden = true;
+  document.getElementById("menu").hidden = false;
+  hideBanner();
+  setPhaseUI();
+}
+
+function togglePause() {
+  if (game.phase === "menu" || game.phase === "over") return;
+  game.paused = !game.paused;
+  document.getElementById("pause").textContent = game.paused ? "Resume" : "Pause";
+  if (game.paused) { sfx.stopSong(); sfx.stopMusic(); banner("Paused", "#ffffff", "", 100000); }
+  else {
+    hideBanner();
+    sfx.startMusic();
+    if (game.phase === "play" && game.light === "green") sfx.song(game.lightUntil - game.clock);  // finish the song
+  }
+}
+
+// Space / M5 button: start from the menu or the end screen, pause during a game
+function onStartKey() {
+  if (game.phase === "menu" || game.phase === "over") startGame();
+  else togglePause();
+}
+
+function renderMenu() {
+  for (const b of document.querySelectorAll("#levels button")) b.classList.toggle("on", b.dataset.level === settings.level);
+  document.getElementById("level-desc").textContent = LEVELS[settings.level].desc;
+  try { localStorage.setItem("redlight", JSON.stringify(settings)); } catch (e) { /* not remembered */ }
+}
+
+function buildProgressDots() {
+  const track = document.getElementById("p-track");
+  for (const el of track.querySelectorAll(".bot")) el.remove();
+  for (const b of bots) {
+    b.dot = document.createElement("div");
+    b.dot.className = "bot";
+    track.insertBefore(b.dot, document.getElementById("p-you"));
+  }
+}
+
+function updateHud() {
+  document.getElementById("s-round").textContent = game.round + 1;
+  document.getElementById("lives").replaceChildren(...Array.from({ length: LV.lives }, (_, i) => {
+    const s = document.createElement("span");
+    s.textContent = "♥";
+    if (i >= game.lives) s.className = "lost";
+    return s;
+  }));
+}
+
+function setStatus(ok, text) {
+  document.getElementById("dot").className = "dot " + (ok ? "ok" : "err");
+  document.getElementById("status").textContent = text;
+}
+
+let bannerTimer = 0, popTimer = 0;
+function banner(text, color, small = "", ms = 900) {
+  const el = document.getElementById("banner");
+  el.textContent = text;
+  if (small) { const s = document.createElement("small"); s.textContent = small; el.appendChild(s); }
+  el.style.color = color;
+  el.classList.add("show");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideBanner, ms);
+}
+const hideBanner = () => document.getElementById("banner").classList.remove("show");
+function pop(text) {
+  const el = document.getElementById("pop");
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(popTimer);
+  popTimer = setTimeout(() => el.classList.remove("show"), 1400);
+}
+
+// ---- Sound: synthesized with Web Audio, and the doll's lines spoken if the browser can ----
+// The doll's chant is the call from the Korean children's game the show's game is based on:
+// "mugunghwa kkochi pieotseumnida", the hibiscus flower has bloomed. It's sung in Korean when the
+// browser has a Korean voice, over a tune squeezed or stretched to end as she turns. The
+// background music is an original march for this game: recorder, snare and bass. It cuts out
+// when she turns around, and a heartbeat plays while she watches.
+const SONG = [392, 392, 440, 392, 349, 330, 349, 392, 330, 294, 330, 392];  // the doll's tune
+const CHANT = "무궁화 꽃이 피었습니다", CHANT_S = 2.4;  // and roughly how long it takes to say at normal speed
+const BEAT_S = 60 / 116 / 2;  // an eighth note at 116 beats a minute
+const midi = n => 440 * Math.pow(2, (n - 69) / 12);
+// 32 eighths (4 bars) of melody, null = rest; bass on each beat; snare on 2 and 4
+const MELODY = [
+  62, null, 65, 67, 69, null, 67, 65,   67, 69, 72, null, 69, 67, 65, null,
+  62, null, 65, 67, 69, 67, 65, 62,     60, 62, 57, null, 62, null, null, null,
+];
+const BASS = [38, 38, 41, 41, 36, 36, 33, 38];  // one per half bar
+const sfx = {
+  ctx: null, notes: [], koVoice: null, musicTimer: 0, mood: "play",
+  init() {
+    if (this.ctx) { this.ctx.resume(); return; }
+    try { this.ctx = new AudioContext(); } catch (e) { return; }
+    const ctx = this.ctx;
+    this.master = ctx.createGain(); this.master.gain.value = 0.5; this.master.connect(ctx.destination);
+    this.music = ctx.createGain(); this.music.gain.value = 0; this.music.connect(this.master);
+    this.noise = ctx.createBuffer(1, ctx.sampleRate / 2, ctx.sampleRate);
+    const d = this.noise.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  },
+  ready() { return this.ctx && this.ctx.state === "running"; },
+  tone(f0, f1, len, gain, type = "sine", at = 0, dest = null, when = null) {
+    if (!this.ready()) return null;
+    const ctx = this.ctx, t = when ?? ctx.currentTime + at, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + len);
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    o.connect(g).connect(dest || this.master);
+    o.start(ctx.currentTime); o.stop(t + len + 0.02);
+    return o;
+  },
+  noiseHit(t, freq, len, gain, dest) {
+    const ctx = this.ctx, src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = this.noise; f.type = "bandpass"; f.frequency.value = freq;
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    src.connect(f).connect(g).connect(dest);
+    src.start(t, Math.random() * 0.3); src.stop(t + len + 0.02);
+  },
+  // A recorder-ish note: a soft triangle with a little vibrato
+  recorder(note, t, len) {
+    const ctx = this.ctx, o = ctx.createOscillator(), g = ctx.createGain(), lfo = ctx.createOscillator(), depth = ctx.createGain();
+    o.type = "triangle"; o.frequency.value = midi(note + 12);
+    lfo.frequency.value = 5.5; depth.gain.value = 4;
+    lfo.connect(depth).connect(o.frequency);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.22, t + 0.03);
+    g.gain.setValueAtTime(0.22, t + len * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    o.connect(g).connect(this.music);
+    o.start(t); lfo.start(t); o.stop(t + len + 0.02); lfo.stop(t + len + 0.02);
+  },
+  // The music runs on its own clock, scheduling a little ahead
+  startMusic() {
+    if (!this.ready() || this.musicTimer) return;
+    this.step = 0;
+    this.nextAt = this.ctx.currentTime + 0.1;
+    this.musicTimer = setInterval(() => this.scheduleMusic(), 25);
+    this.setMood(this.mood);
+  },
+  stopMusic() {
+    clearInterval(this.musicTimer);
+    this.musicTimer = 0;
+    if (this.music) this.music.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+  },
+  scheduleMusic() {
+    while (this.nextAt < this.ctx.currentTime + 0.12) {
+      const i = this.step % 32, t = this.nextAt;
+      if (this.mood === "watch") {
+        // A heartbeat while she watches
+        if (i % 8 === 0 || i % 8 === 1) this.tone(70, 45, 0.16, i % 8 ? 0.35 : 0.5, "sine", 0, this.master, t);
+      } else {
+        if (MELODY[i] !== null) {
+          let len = 1;
+          while (len < 3 && MELODY[(i + len) % 32] === null && (i + len) % 32 !== 0) len++;
+          this.recorder(MELODY[i], t, len * BEAT_S * 0.95);
+        }
+        if (i % 2 === 0) this.tone(midi(BASS[Math.floor(i / 4) % 8]), midi(BASS[Math.floor(i / 4) % 8]), BEAT_S * 1.6, 0.3, "sine", 0, this.music, t);
+        if (i % 4 === 2) this.noiseHit(t, 1800, 0.12, 0.35, this.music);
+        if (i % 8 === 6) this.noiseHit(t + BEAT_S / 2, 1800, 0.08, 0.2, this.music);  // a little roll into the next beat
+      }
+      this.step++;
+      this.nextAt += BEAT_S;
+    }
+  },
+  // "play": music; "song": music softer under the doll's chant; "watch": no music, a heartbeat
+  setMood(mood) {
+    this.mood = mood;
+    if (!this.music) return;
+    const level = !settings.music || mood === "watch" ? 0 : mood === "song" ? 0.45 : 0.8;
+    this.music.gain.setTargetAtTime(level, this.ctx.currentTime, mood === "watch" ? 0.02 : 0.15);
+  },
+  // The doll's song: the tune, and the chant over it if there's a Korean voice
+  song(ms) {
+    this.stopSong();
+    const step = Math.max(0.1, ms / 1000 / SONG.length);
+    SONG.forEach((f, i) => { const o = this.tone(f, f, step * 0.9, 0.12, "sine", i * step); if (o) this.notes.push(o); });
+    if (!this.koVoice || !window.speechSynthesis) return false;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(CHANT);
+    u.voice = this.koVoice; u.lang = this.koVoice.lang;
+    u.rate = clamp(CHANT_S / (ms / 1000), 0.6, 2.2);
+    u.pitch = 1.5;
+    speechSynthesis.speak(u);
+    return true;
+  },
+  stopSong() {
+    for (const o of this.notes) { try { o.stop(); } catch (e) { /* already stopped */ } }
+    this.notes = [];
+    if (this.koVoice && window.speechSynthesis) speechSynthesis.cancel();
+  },
+  say(text) {
+    if (!window.speechSynthesis) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.15;
+    speechSynthesis.speak(u);
+  },
+};
+// Voices arrive asynchronously in some browsers
+function findKoreanVoice() { if (window.speechSynthesis) sfx.koVoice = speechSynthesis.getVoices().find(v => v.lang.toLowerCase().startsWith("ko")) || null; }
+if (window.speechSynthesis) { findKoreanVoice(); speechSynthesis.addEventListener("voiceschanged", findKoreanVoice); }
+
+function renderMusicButton() {
+  document.getElementById("music").textContent = `Music: ${settings.music ? "on" : "off"}`;
+}
+function toggleMusic() {
+  settings.music = !settings.music;
+  try { localStorage.setItem("redlight", JSON.stringify(settings)); } catch (e) { /* not remembered */ }
+  renderMusicButton();
+  sfx.setMood(sfx.mood);
+}
+
+function drainEvents() {
+  for (const e of events.splice(0)) {
+    if (e.type === "count") { banner(String(e.n), "#ffffff", "", 900); sfx.tone(660, 660, 0.1, 0.2, "square"); }
+    else if (e.type === "green") {
+      banner("Green light", "#9cf5bf", "run!", 800);
+      sfx.setMood("song");
+      if (!sfx.song(e.ms)) sfx.say("Green light");
+    } else if (e.type === "turning") { sfx.stopSong(); sfx.setMood("watch"); }
+    else if (e.type === "red") {
+      banner("Red light!", "#ffb3b3", "freeze", 800);
+      sfx.tone(180, 140, 0.5, 0.3, "sawtooth");
+      sfx.say("Red light");
+    } else if (e.type === "caught") {
+      sfx.tone(140, 60, 0.6, 0.6, "square");
+      banner("Seen!", "#ffb3b3", `you moved: back ${SENT_BACK} m`, 1500);
+      updateHud();
+    } else if (e.type === "botOut") pop(`Player ${String(e.b.num).padStart(3, "0")} moved: eliminated`);
+    else if (e.type === "cleared") {
+      [523, 659, 784, 1047].forEach((f, i) => sfx.tone(f, f, 0.25, 0.25, "triangle", i * 0.15));
+      banner(`Round ${e.round} cleared!`, "#9cf5bf", `round ${e.round + 1}: she gets stricter`, 2200);
+    } else if (e.type === "round") {
+      sfx.stopSong();
+      sfx.setMood("play");
+      sfx.startMusic();
+      buildProgressDots();
+      updateHud();
+    } else if (e.type === "over") {
+      sfx.stopSong();
+      sfx.stopMusic();
+      updateHud();
+      setPhaseUI();
+      sfx.tone(140, 50, 0.9, 0.6, "square");
+      banner(e.result === "time" ? "Time's up" : "Eliminated", "#ffb3b3", "", 1500);
+      const stat = (k, v) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+      const survivors = bots.filter(b => !b.out).length;
+      document.getElementById("over-title").textContent = e.result === "time" ? `Time's up in round ${game.round + 1}` : `Eliminated in round ${game.round + 1}`;
+      document.getElementById("summary").innerHTML =
+        stat("Rounds cleared", game.round) + stat("Reached", `${Math.floor(game.pos)} <small>m</small>`) + stat("Times seen", game.caught) +
+        stat("Strides", game.strides) + stat("Time", `${Math.round(game.totalTime)} <small>s</small>`) +
+        stat("Others left", `${survivors} <small>of ${bots.length}</small>`);
+      const bestRounds = best[settings.level] || 0;
+      document.getElementById("over-sub").textContent = `${LV.label}.` +
+        (e.isBest ? " New best!" : ` Best: ${bestRounds} round${bestRounds === 1 ? "" : "s"} cleared.`) + " Press Space or Play again for another go.";
+      setTimeout(() => { if (game.phase === "over") document.getElementById("over").hidden = false; }, 1500);
+    }
+  }
+}
+
+for (const b of document.querySelectorAll("#levels button")) b.onclick = () => { settings.level = b.dataset.level; renderMenu(); };
+document.getElementById("start").onclick = startGame;
+document.getElementById("again").onclick = startGame;
+document.getElementById("to-menu").onclick = showMenu;
+document.getElementById("menu-btn").onclick = showMenu;
+document.getElementById("pause").onclick = togglePause;
+document.getElementById("music").onclick = toggleMusic;
+document.addEventListener("keydown", e => {
+  if (e.code === "Space") { e.preventDefault(); onStartKey(); }
+  else if (e.code === "KeyM") toggleMusic();
+});
+document.getElementById("view").addEventListener("click", () => { if (game.phase !== "menu" && game.phase !== "over") togglePause(); });
+renderMenu();
+renderMusicButton();
+setPhaseUI();
+
+setStatus(false, "Connecting…");
+connectStream({
+  open() { resetStream(); setStatus(true, "Live"); },
+  batch(name, batch) { setStatus(true, `Live · ${name}`); feedBatch(batch); },
+  closed(retryMs) { setStatus(false, `Disconnected — retrying in ${(retryMs / 1000).toFixed(1)} s`); },
+});
+
+// ---- 3D view ----
+import("https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js").then(buildScene, () => {
+  document.getElementById("menu-err").textContent =
+    "Couldn't load the 3D library. This page needs internet access for three.js.";
+});
+
+function buildScene(THREE) {
+  const view = document.getElementById("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  view.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x9ccbe9);
+  scene.fog = new THREE.Fog(0x9ccbe9, 60, 140);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 300);
+  scene.add(new THREE.HemisphereLight(0xf3f7ff, 0x9a8460, 1.6));
+  const sun = new THREE.DirectionalLight(0xfff1dc, 2.2);
+  sun.position.set(12, 30, 10);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 40, bottom: -60, near: 1, far: 120 });
+  sun.target.position.set(0, 0, -30);
+  scene.add(sun, sun.target);
+  const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...extra });
+  const mesh = (geo, m, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; o.receiveShadow = true; return o; };
+
+  // ---- The field: sand between walls painted like sky, a start line and a red finish line ----
+  const W = 24;
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(W, DOLL_S + 30), mat(0xd9c08e));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.z = -(DOLL_S + 30) / 2 + 10;
+  ground.receiveShadow = true;
+  scene.add(ground);
+  const wallMat = mat(0x8ec5ea);
+  const wallL = mesh(new THREE.BoxGeometry(0.5, 9, DOLL_S + 30), wallMat, -W / 2, 4.5, ground.position.z);
+  const wallR = mesh(new THREE.BoxGeometry(0.5, 9, DOLL_S + 30), wallMat, W / 2, 4.5, ground.position.z);
+  const wallB = mesh(new THREE.BoxGeometry(W, 12, 0.5), wallMat, 0, 6, -DOLL_S - 12);
+  scene.add(wallL, wallR, wallB);
+  // Clouds painted on the walls: flat white puffs
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const puff = new THREE.CircleGeometry(1, 20);
+  function cloud(x, y, z, ry, size) {
+    const c = new THREE.Group();
+    for (const [dx, dy, r] of [[0, 0, 1], [1.1, -0.2, 0.75], [-1.1, -0.25, 0.7], [0.5, 0.55, 0.65]]) {
+      const p = new THREE.Mesh(puff, cloudMat);
+      p.position.set(dx, dy, 0);
+      p.scale.setScalar(r);
+      c.add(p);
+    }
+    c.position.set(x, y, z);
+    c.rotation.y = ry;
+    c.scale.setScalar(size);
+    scene.add(c);
+  }
+  for (let i = 0; i < 7; i++) cloud(rand(-W / 2 + 3, W / 2 - 3), rand(5, 10), -DOLL_S - 11.7, 0, rand(0.7, 1.3));
+  for (let i = 0; i < 18; i++) {
+    const side = i % 2 ? 1 : -1;
+    cloud(side * (W / 2 - 0.27), rand(3.5, 8), rand(-DOLL_S - 8, 4), -side * Math.PI / 2, rand(0.7, 1.3));
+  }
+  const line = (z, color) => { const l = new THREE.Mesh(new THREE.PlaneGeometry(W, 0.6), mat(color)); l.rotation.x = -Math.PI / 2; l.position.set(0, 0.01, z); scene.add(l); };
+  line(0, 0xffffff);
+  line(-FIELD, 0xd63031);
+
+  // ---- The tree behind the doll: bare, crooked branches ----
+  const bark = mat(0x5b4430);
+  const tree = new THREE.Group();
+  tree.add(mesh(new THREE.CylinderGeometry(0.35, 0.55, 7, 8), bark, 0, 3.5, 0));
+  for (const [y, rz, ry, len] of [[5.5, 0.8, 0.3, 3.5], [6.2, -0.9, -0.5, 3], [4.6, -0.6, 2.2, 2.8], [6.8, 0.5, 2.8, 2.4]]) {
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.2, len, 6), bark);
+    b.position.y = len / 2;
+    const pivot = new THREE.Group();
+    pivot.position.y = y;
+    pivot.rotation.set(0, ry, rz);
+    pivot.add(b);
+    tree.add(pivot);
+  }
+  tree.position.set(5, 0, -DOLL_S - 6);
+  tree.scale.setScalar(1.4);
+  scene.add(tree);
+
+  // ---- The doll: back to you while she sings, turning to face you to watch ----
+  const skin = mat(0xf2d3b3), dress = mat(0xf0882e), top = mat(0xf5cf3a), hair = mat(0x1a1a1a, { roughness: 0.5 });
+  const doll = new THREE.Group(), body = new THREE.Group();
+  for (const x of [-0.2, 0.2]) {
+    body.add(mesh(new THREE.CylinderGeometry(0.12, 0.11, 1.3, 10), skin, x, 0.75, 0));
+    body.add(mesh(new THREE.BoxGeometry(0.24, 0.12, 0.38), mat(0xffffff), x, 0.06, 0.06));
+  }
+  body.add(mesh(new THREE.CylinderGeometry(0.42, 0.95, 1.2, 20), dress, 0, 1.85, 0));
+  body.add(mesh(new THREE.CylinderGeometry(0.4, 0.44, 0.75, 20), top, 0, 2.75, 0));
+  body.add(mesh(new THREE.CylinderGeometry(0.2, 0.26, 0.12, 16), mat(0xffffff), 0, 3.15, 0));
+  for (const x of [-0.55, 0.55]) {
+    const arm = mesh(new THREE.CapsuleGeometry(0.1, 1.0, 4, 8), skin, x, 2.45, 0);
+    arm.rotation.z = x > 0 ? 0.12 : -0.12;
+    body.add(arm);
+  }
+  const head = new THREE.Group();
+  head.position.y = 3.65;
+  head.add(mesh(new THREE.SphereGeometry(0.55, 24, 18), skin));
+  // Hair: a cap over the top and bangs, the whole back, and two buns
+  const cap = mesh(new THREE.SphereGeometry(0.58, 24, 12, 0, Math.PI * 2, 0, 1.0), hair, 0, 0.02, 0);
+  const back = mesh(new THREE.SphereGeometry(0.585, 24, 18, Math.PI, Math.PI, 0, 2.3), hair);
+  head.add(cap, back);
+  for (const x of [-0.6, 0.6]) head.add(mesh(new THREE.SphereGeometry(0.2, 12, 10), hair, x, 0.18, -0.12));
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0x000000, roughness: 0.3 });
+  for (const x of [-0.19, 0.19]) head.add(mesh(new THREE.SphereGeometry(0.075, 12, 8), eyeMat, x, 0.02, 0.5));
+  const mouth = mesh(new THREE.SphereGeometry(0.07, 12, 8), mat(0xc0392b), 0, -0.22, 0.52);
+  mouth.scale.set(1.4, 0.5, 0.5);
+  head.add(mouth);
+  for (const x of [-0.3, 0.3]) { const blush = mesh(new THREE.SphereGeometry(0.09, 12, 8), mat(0xf4a6a0), x, -0.12, 0.47); blush.scale.z = 0.3; head.add(blush); }
+  body.add(head);
+  doll.add(body);
+  doll.scale.setScalar(2.3);  // about 9 m tall
+  doll.position.set(0, 0, -DOLL_S);
+  scene.add(doll);
+
+  // ---- Players: you and the others, in green tracksuits ----
+  const limb = (r, len, m) => { const p = new THREE.Group(), o = mesh(new THREE.CapsuleGeometry(r, len, 4, 10), m); o.position.y = -len / 2; p.add(o); return p; };
+  const suit = mat(0x1f8a70), suitOut = mat(0x7f8c8d), white = mat(0xf2f2f2);
+  function makePlayer(skinColor, hairColor, mine) {
+    const g = new THREE.Group(), fig = new THREE.Group();
+    const s = mat(skinColor), h = mat(hairColor);
+    const legL = limb(0.07, 0.72, suit), legR = limb(0.07, 0.72, suit);
+    legL.position.set(-0.11, 0.95, 0); legR.position.set(0.11, 0.95, 0);
+    const torso = mesh(new THREE.CapsuleGeometry(0.18, 0.4, 4, 10), suit, 0, 1.3, 0);
+    const stripe = mesh(new THREE.BoxGeometry(0.38, 0.05, 0.02), white, 0, 1.45, -0.18);  // on the back
+    const headM = mesh(new THREE.SphereGeometry(0.13, 16, 12), s, 0, 1.75, 0);
+    const hairM = mesh(new THREE.SphereGeometry(0.14, 16, 8, 0, Math.PI * 2, 0, Math.PI / 1.8), h, 0, 1.77, 0);
+    const armL = limb(0.05, 0.5, suit), armR = limb(0.05, 0.5, suit);
+    armL.position.set(-0.26, 1.52, 0); armR.position.set(0.26, 1.52, 0);
+    fig.add(legL, legR, torso, stripe, headM, hairM, armL, armR);
+    if (mine) {  // a marker over your head, so you can find yourself in the crowd
+      const m = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 12), mat(0xf5cf3a, { emissive: 0x6b5200 }));
+      m.rotation.x = Math.PI; m.position.y = 2.15;
+      fig.add(m);
+    }
+    g.add(fig);
+    scene.add(g);
+    return { g, fig, legL, legR, armL, armR, parts: [legL, legR, torso, armL, armR], phase: rand(0, 6), shown: 0 };
+  }
+  const you = makePlayer(0xe0c2a2, 0x2b1d14, true);
+  const SKINS = [0xe0c2a2, 0xc69c78, 0x8d5f3f, 0xf1d6bf], HAIRS = [0x111111, 0x3b2a1e, 0x6b4a2f, 0x999999];
+  const others = [];
+  function syncBots() {
+    while (others.length < bots.length) others.push(makePlayer(SKINS[others.length % 4], HAIRS[(others.length * 3) % 4], false));
+    for (let i = 0; i < others.length; i++) others[i].g.visible = i < bots.length;
+  }
+  const setSuit = (p, m) => { for (const part of p.parts) part.traverse(o => { if (o.isMesh) o.material = m; }); };
+
+  // Poses a player: legs and arms swing while moving; out of the game, they fall back and grey out
+  function pose(p, x, s, speed, dt, outFor, dropped) {
+    p.shown = Math.abs(s - p.shown) > 8 ? s : p.shown + (s - p.shown) * Math.min(1, dt * 10);  // a new round snaps back to the start
+    p.g.position.set(x, 0, -p.shown);
+    let swing = 0;
+    if (speed > 0.2 && outFor < 0) { p.phase += dt * Math.PI * 2 * clamp(speed / 2, 0.8, 2.4); swing = Math.sin(p.phase); }
+    p.legL.rotation.x = swing * 0.7; p.legR.rotation.x = -swing * 0.7;
+    p.armL.rotation.x = -swing * 0.6; p.armR.rotation.x = swing * 0.6;
+    const f = outFor < 0 ? 0 : clamp(outFor / 600, 0, 1);
+    p.fig.rotation.x = -f * 1.45;
+    p.fig.position.set(0, f * 0.15, f * 0.6);
+    if (dropped !== p.dropped) { p.dropped = dropped; setSuit(p, dropped ? suitOut : suit); }
+  }
+
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.fov = w / h < 1 ? 75 : 60;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+  resize();
+  document.addEventListener("pointerdown", () => sfx.init(), { once: true });
+
+  const camPos = new THREE.Vector3(0, 2.6, 6);
+  let lastFrame = performance.now(), hudAt = 0;
+  function frame() {
+    requestAnimationFrame(frame);
+    const now = performance.now(), dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    drainEvents();
+
+    // Doll: back to you during the song, facing you while she watches
+    const turnF = clamp((game.clock - game.lightAt) / TURN_MS, 0, 1);
+    const facing = game.phase !== "play" ? 0 : game.light === "red" ? 1 : game.light === "turning" ? turnF : game.light === "back" ? 1 - turnF : 0;
+    const ease = facing * facing * (3 - 2 * facing);
+    body.rotation.y = Math.PI * (1 - ease);
+    head.rotation.y = game.light === "red" && game.phase === "play" ? Math.sin(now / 700) * 0.25 : 0;  // scanning the field
+    eyeMat.emissive.setHex(game.light === "red" && game.phase === "play" ? 0x8a0000 : 0x000000);
+
+    // You, and the others
+    const inGame = game.phase !== "menu";
+    const youSpeed = game.light === "red" ? 0 : game.v;
+    const youOut = game.phase === "over" && game.result === "out" ? game.clock - game.caughtAt : -1;
+    pose(you, 0, inGame ? game.pos : 0, youSpeed, dt, youOut, youOut >= 0);
+    you.g.visible = !(game.clock - game.caughtAt < 900 && game.phase === "play" && Math.floor(now / 110) % 2 === 0);
+    syncBots();
+    for (let i = 0; i < bots.length; i++) {
+      const b = bots[i], running = game.phase === "play" && (game.light === "green" || game.light === "back") && !b.out && !b.done;
+      pose(others[i], b.x, b.pos, running ? b.speed : 0, dt, b.out ? game.clock - b.outClock : -1, b.out);
+    }
+
+    // Camera: behind you, looking down the field at the doll
+    const target = new THREE.Vector3(0, 2.6, -you.shown + 6);
+    camPos.lerp(target, 1 - Math.exp(-dt * 8));
+    camera.position.copy(camPos);
+    camera.lookAt(0, 1.8, -you.shown - 20);
+
+    // Movement meter and progress
+    const over = motion.level > 1;
+    document.getElementById("m-fill").style.height = `${clamp(motion.level / 2, 0, 1) * 100}%`;
+    document.getElementById("m-fill").classList.toggle("over", over && game.light === "red");
+    document.getElementById("m-mark").style.bottom = "50%";
+    document.getElementById("p-you").style.left = `${clamp(game.pos / FIELD, 0, 1) * 100}%`;
+    for (const b of bots) if (b.dot) { b.dot.style.left = `${clamp(b.pos / FIELD, 0, 1) * 100}%`; b.dot.classList.toggle("out", b.out); }
+    const lightEl = document.getElementById("light"), red = game.phase === "play" && (game.light === "red" || game.light === "turning");
+    lightEl.textContent = game.phase !== "play" ? "GET READY" : red ? "RED LIGHT" : "GREEN LIGHT";
+    lightEl.classList.toggle("red", red);
+    if (now - hudAt > 150) {
+      hudAt = now;
+      document.getElementById("m-text").textContent = over ? "moving" : motion.level > 0.6 ? "careful" : "still";
+      if (inGame) {
+        document.getElementById("s-togo").firstChild.textContent = `${Math.max(0, Math.ceil(FIELD - game.pos))} `;
+        document.getElementById("s-time").firstChild.textContent = `${Math.ceil(game.timeLeft)} `;
+      }
+    }
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>
